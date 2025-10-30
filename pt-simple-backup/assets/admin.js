@@ -1,0 +1,1 @@
+/* Scripts administrativos para o PT Simple Backup. */
