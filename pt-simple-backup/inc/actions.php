@@ -3,14 +3,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDays = null){
+function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDays = null, bool $skipChunking = false){
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
     if (!ptsb_can_shell()) return;
-
-    if (!ptsb_lock_acquire('backup_start')) {
-        return;
-    }
 
     ptsb_log_rotate_if_needed();
     if (function_exists('ptsb_remote_manifest_invalidate')) {
@@ -46,6 +42,40 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
         $keepDays = (int)$set['keep_days'];
     }
 
+    $normalizedParts = ptsb_backup_normalize_parts_csv((string)$partsCsv);
+    if (!$skipChunking) {
+        update_option('ptsb_last_run_parts', (string)$normalizedParts, true);
+    }
+
+    if (!$skipChunking) {
+        $chunks = ptsb_backup_chunk_plan($normalizedParts);
+        if ($chunks && (count($chunks) > 1 || $chunks[0] !== $normalizedParts)) {
+            if (!ptsb_lock_is_locked()) {
+                if (function_exists('ptsb_log')) {
+                    ptsb_log('ptsb: enfileirando backup em '.count($chunks).' partes ('.$normalizedParts.').');
+                }
+                $total = count($chunks);
+                foreach ($chunks as $idx => $chunkCsv) {
+                    ptsb_enqueue_backup_job([
+                        'parts_csv'    => $chunkCsv,
+                        'prefix'       => $overridePrefix,
+                        'keep_days'    => $overrideDays,
+                        'origin'       => 'chunk',
+                        'keep_forever' => ($keepDays === 0 ? 1 : 0),
+                        'chunk_of'     => $normalizedParts,
+                        'chunk_idx'    => $idx + 1,
+                        'chunk_len'    => $total,
+                    ], max(5, 10 * $idx));
+                }
+            }
+            return;
+        }
+    }
+
+    if (!ptsb_lock_acquire('backup_start')) {
+        return;
+    }
+
     $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . 'REMOTE='           . escapeshellarg($cfg['remote'])     . ' '
          . 'WP_PATH='          . escapeshellarg(ABSPATH)            . ' '
@@ -55,16 +85,119 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
          . 'RETENTION_DAYS='   . escapeshellarg($keepDays)          . ' '
          . 'RETENTION='        . escapeshellarg($keepDays)          . ' '
          . 'KEEP_FOREVER='     . escapeshellarg($keepDays === 0 ? 1 : 0) . ' ' // opcional p/ scripts que queiram esse flag
-         . 'PARTS='            . escapeshellarg($partsCsv);
-
-    // guarda as partes usadas neste disparo (fallback para a notificação)
-    update_option('ptsb_last_run_parts', (string)$partsCsv, true);
+         . 'PARTS='            . escapeshellarg($normalizedParts);
 
     $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
 
     shell_exec($cmd);
 }
+
+function ptsb_backup_normalize_parts_csv(string $partsCsv): string {
+    $parts = array_filter(array_map('trim', explode(',', strtolower($partsCsv))));
+    $parts = array_values(array_unique($parts));
+    return implode(',', $parts);
+}
+
+function ptsb_backup_chunk_plan(string $normalizedParts): array {
+    $normalizedParts = ptsb_backup_normalize_parts_csv($normalizedParts);
+    if ($normalizedParts === '') {
+        return [];
+    }
+
+    $parts   = explode(',', $normalizedParts);
+    $pending = array_fill_keys($parts, true);
+    $chunks  = [];
+
+    $push = static function(array $items) use (&$chunks, &$pending): void {
+        $items = array_values(array_filter(array_map('trim', $items)));
+        if (!$items) {
+            return;
+        }
+        $chunk = implode(',', $items);
+        if ($chunk === '') {
+            return;
+        }
+        $chunks[] = $chunk;
+        foreach ($items as $item) {
+            unset($pending[$item]);
+        }
+    };
+
+    if (isset($pending['db'])) {
+        $push(['db']);
+    }
+    if (isset($pending['core'])) {
+        $push(['core']);
+    }
+    if (isset($pending['themes'])) {
+        $push(['themes']);
+    }
+    if (isset($pending['plugins'])) {
+        $push(['plugins']);
+    }
+    if (isset($pending['uploads'])) {
+        unset($pending['uploads']);
+        foreach (ptsb_backup_upload_chunks() as $uploadChunk) {
+            if ($uploadChunk !== '') {
+                $chunks[] = $uploadChunk;
+            }
+        }
+    }
+    if (isset($pending['scripts'])) {
+        $push(['scripts']);
+    }
+
+    $otherKeys = array_values(array_intersect(['others', 'langs', 'config'], array_keys($pending)));
+    if ($otherKeys) {
+        $push($otherKeys);
+    }
+
+    if ($pending) {
+        $push(array_keys($pending));
+    }
+
+    $chunks = array_values(array_unique(array_filter(array_map('trim', $chunks))));
+    return apply_filters('ptsb_backup_chunks', $chunks, $normalizedParts);
+}
+
+function ptsb_backup_upload_chunks(): array {
+    if (!function_exists('wp_get_upload_dir')) {
+        return ['uploads'];
+    }
+
+    $uploads = wp_get_upload_dir();
+    $baseDir = isset($uploads['basedir']) ? (string)$uploads['basedir'] : '';
+    $chunks  = [];
+
+    if ($baseDir !== '' && @is_dir($baseDir)) {
+        $years = @glob($baseDir . DIRECTORY_SEPARATOR . '[0-9][0-9][0-9][0-9]', GLOB_ONLYDIR);
+        if (is_array($years)) {
+            rsort($years);
+            foreach ($years as $yearDir) {
+                $year = basename($yearDir);
+                $months = @glob($yearDir . DIRECTORY_SEPARATOR . '[0-9][0-9]', GLOB_ONLYDIR);
+                if (is_array($months) && $months) {
+                    rsort($months);
+                    foreach ($months as $monthDir) {
+                        $month = basename($monthDir);
+                        $chunks[] = 'uploads:' . $year . '-' . $month;
+                    }
+                } else {
+                    $chunks[] = 'uploads:' . $year;
+                }
+            }
+        }
+    }
+
+    if (!$chunks) {
+        $chunks[] = 'uploads';
+    }
+
+    $chunks = array_values(array_unique(array_filter(array_map('trim', $chunks))));
+    return apply_filters('ptsb_upload_chunks', $chunks, $baseDir);
+}
+
 
 function ptsb_backup_jobs_get(): array {
     $jobs = get_option('ptsb_backup_jobs', []);
@@ -206,7 +339,7 @@ add_action('ptsb_run_backup_job', function($jobId){
         'started_at'   => time(),
     ], true);
 
-    ptsb_start_backup($partsCsv, $prefix, $keepDays);
+    ptsb_start_backup($partsCsv, $prefix, $keepDays, true);
 }, 10, 1);
 
 function ptsb_process_admin_job(array $job): bool {
