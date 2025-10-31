@@ -69,6 +69,15 @@ function ptsb_backup_jobs_save(array $jobs): void {
     update_option('ptsb_backup_jobs', $jobs, false);
 }
 
+function ptsb_admin_jobs_get(): array {
+    $jobs = get_option('ptsb_admin_jobs', []);
+    return is_array($jobs) ? $jobs : [];
+}
+
+function ptsb_admin_jobs_save(array $jobs): void {
+    update_option('ptsb_admin_jobs', $jobs, false);
+}
+
 function ptsb_enqueue_backup_job(array $job, int $delay = 5): ?string {
     if (empty($job['parts_csv'])) {
         return null;
@@ -95,6 +104,41 @@ function ptsb_enqueue_backup_job(array $job, int $delay = 5): ?string {
     }
 
     return $id;
+}
+
+function ptsb_enqueue_admin_task(string $task, array $payload = [], int $delay = 5): ?string {
+    $task = trim($task);
+    if ($task === '') {
+        return null;
+    }
+
+    $jobs = ptsb_admin_jobs_get();
+    $id   = ptsb_uuid4();
+    $jobs[$id] = [
+        'id'        => $id,
+        'task'      => $task,
+        'payload'   => $payload,
+        'created_at'=> time(),
+        'attempts'  => 0,
+    ];
+
+    ptsb_admin_jobs_save($jobs);
+
+    $delay = max(1, $delay);
+    if (!wp_next_scheduled('ptsb_run_admin_task', [$id])) {
+        wp_schedule_single_event(time() + $delay, 'ptsb_run_admin_task', [$id]);
+    }
+
+    if (!wp_doing_cron() && function_exists('spawn_cron')) {
+        spawn_cron(time());
+    }
+
+    return $id;
+}
+
+function ptsb_admin_task_retry_delay(int $attempts): int {
+    $base = 10 * ($attempts + 1);
+    return (int) min(300, max(5, $base));
 }
 
 function ptsb_reschedule_backup_job(string $jobId, array $job, array $jobs, int $delay): void {
@@ -157,6 +201,278 @@ add_action('ptsb_run_backup_job', function($jobId){
     ], true);
 
     ptsb_start_backup($partsCsv, $prefix, $keepDays);
+}, 10, 1);
+
+function ptsb_process_admin_job(array $job): bool {
+    if (!ptsb_can_shell()) {
+        ptsb_log('ptsb: shell_exec indisponível para job administrativo.');
+        return false;
+    }
+
+    $task    = isset($job['task']) ? (string)$job['task'] : '';
+    $payload = isset($job['payload']) && is_array($job['payload']) ? $job['payload'] : [];
+    $cfg     = ptsb_cfg();
+    $remote  = $cfg['remote'];
+    $envBase = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 ';
+
+    switch ($task) {
+        case 'rename':
+            $old = isset($payload['old']) ? (string)$payload['old'] : '';
+            $new = isset($payload['new']) ? (string)$payload['new'] : '';
+
+            if ($old === '' || $new === '' || $old === $new) {
+                return true;
+            }
+
+            if (!preg_match('/^[A-Za-z0-9._-]+\.tar\.gz$/', $old)) {
+                ptsb_log('ptsb: job rename ignorado (old inválido).');
+                return true;
+            }
+            if (!preg_match('/^[A-Za-z0-9._-]+\.tar\.gz$/', $new)) {
+                ptsb_log('ptsb: job rename ignorado (new inválido).');
+                return true;
+            }
+
+            $exists = shell_exec(
+                $envBase
+                . ' rclone lsf '
+                . escapeshellarg($remote)
+                . ' --files-only --format "p" --include '
+                . escapeshellarg($new)
+                . ' --fast-list'
+            );
+            if (trim((string)$exists) !== '') {
+                ptsb_log('ptsb: job rename abortado, destino já existe: '.$new);
+                return true;
+            }
+
+            $mvCmd = $envBase
+                   . ' rclone moveto '
+                   . escapeshellarg($remote.$old)
+                   . ' '
+                   . escapeshellarg($remote.$new)
+                   . ' --fast-list 2>&1';
+            $out = shell_exec($mvCmd);
+
+            $chkOld = shell_exec(
+                $envBase
+                . ' rclone lsf '
+                . escapeshellarg($remote)
+                . ' --files-only --format "p" --include '
+                . escapeshellarg($old)
+                . ' --fast-list'
+            );
+            $chkNew = shell_exec(
+                $envBase
+                . ' rclone lsf '
+                . escapeshellarg($remote)
+                . ' --files-only --format "p" --include '
+                . escapeshellarg($new)
+                . ' --fast-list'
+            );
+
+            if (trim((string)$chkOld) !== '' || trim((string)$chkNew) === '') {
+                ptsb_log('ptsb: falha ao renomear '.$old.' -> '.$new.'. Saída: '.trim((string)$out));
+                return false;
+            }
+
+            $oldJson = ptsb_tar_to_json($old);
+            $newJson = ptsb_tar_to_json($new);
+            $hasJson = shell_exec(
+                $envBase
+                . ' rclone lsf '
+                . escapeshellarg($remote)
+                . ' --files-only --format "p" --include '
+                . escapeshellarg($oldJson)
+                . ' --fast-list'
+            );
+            if (trim((string)$hasJson) !== '') {
+                $jsonMove = $envBase
+                          . ' rclone moveto '
+                          . escapeshellarg($remote.$oldJson)
+                          . ' '
+                          . escapeshellarg($remote.$newJson)
+                          . ' --fast-list';
+                shell_exec($jsonMove);
+            }
+
+            $oldKeep = $old.'.keep';
+            $hasKeep = shell_exec(
+                $envBase
+                . ' rclone lsf '
+                . escapeshellarg($remote)
+                . ' --files-only --format "p" --include '
+                . escapeshellarg($oldKeep)
+                . ' --fast-list'
+            );
+            if (trim((string)$hasKeep) !== '') {
+                $newKeep = $new.'.keep';
+                $keepMove = $envBase
+                          . ' rclone moveto '
+                          . escapeshellarg($remote.$oldKeep)
+                          . ' '
+                          . escapeshellarg($remote.$newKeep)
+                          . ' --fast-list';
+                shell_exec($keepMove);
+            }
+
+            ptsb_log('Arquivo renomeado via job: '.$old.' -> '.$new);
+            return true;
+
+        case 'keep_toggle':
+            $file = isset($payload['file']) ? (string)$payload['file'] : '';
+            $keep = !empty($payload['keep']);
+
+            if ($file === '' || !preg_match('/^[A-Za-z0-9._-]+\.tar\.gz$/', $file)) {
+                ptsb_log('ptsb: job keep_toggle ignorado (arquivo inválido).');
+                return true;
+            }
+
+            if ($keep) {
+                $touch = $envBase
+                       . ' rclone touch '
+                       . escapeshellarg($remote.$file.'.keep')
+                       . ' --no-create-dirs';
+                $rcat  = 'printf "" | '.$envBase
+                       . ' rclone rcat '
+                       . escapeshellarg($remote.$file.'.keep');
+                shell_exec($touch . ' || ' . $rcat);
+
+                $chk = shell_exec(
+                    $envBase
+                    . ' rclone lsf '
+                    . escapeshellarg($remote)
+                    . ' --files-only --format "p" --include '
+                    . escapeshellarg($file.'.keep')
+                    . ' --fast-list'
+                );
+                if (trim((string)$chk) === '') {
+                    ptsb_log('ptsb: falha ao marcar Sempre manter para '.$file);
+                    return false;
+                }
+
+                ptsb_log('Arquivo marcado como Sempre manter via job: '.$file);
+                return true;
+            }
+
+            $delKeep = $envBase
+                     . ' rclone deletefile '
+                     . escapeshellarg($remote.$file.'.keep')
+                     . ' --fast-list';
+            shell_exec($delKeep);
+
+            $chk = shell_exec(
+                $envBase
+                . ' rclone lsf '
+                . escapeshellarg($remote)
+                . ' --files-only --format "p" --include '
+                . escapeshellarg($file.'.keep')
+                . ' --fast-list'
+            );
+            if (trim((string)$chk) !== '') {
+                ptsb_log('ptsb: falha ao remover Sempre manter de '.$file);
+                return false;
+            }
+
+            ptsb_log('Marca Sempre manter removida via job: '.$file);
+            return true;
+
+        case 'delete':
+            $file = isset($payload['file']) ? (string)$payload['file'] : '';
+
+            if ($file === '' || !preg_match('/^[A-Za-z0-9._-]+\.tar\.gz$/', $file)) {
+                ptsb_log('ptsb: job delete ignorado (arquivo inválido).');
+                return true;
+            }
+
+            $keep = shell_exec(
+                $envBase
+                . ' rclone lsf '
+                . escapeshellarg($remote)
+                . ' --files-only --format "p" --include '
+                . escapeshellarg($file.'.keep')
+                . ' --fast-list'
+            );
+            if (trim((string)$keep) !== '') {
+                ptsb_log('ptsb: remoção ignorada, arquivo marcado como Sempre manter: '.$file);
+                return true;
+            }
+
+            $delTar = $envBase
+                    . ' rclone deletefile '
+                    . escapeshellarg($remote.$file)
+                    . ' --fast-list';
+            shell_exec($delTar);
+
+            $jsonPath = ptsb_tar_to_json($file);
+            $delJson = $envBase
+                     . ' rclone deletefile '
+                     . escapeshellarg($remote.$jsonPath)
+                     . ' --fast-list';
+            shell_exec($delJson);
+
+            delete_transient('ptsb_m_' . md5($file));
+
+            $chk = shell_exec(
+                $envBase
+                . ' rclone lsf '
+                . escapeshellarg($remote)
+                . ' --files-only --format "p" --include '
+                . escapeshellarg($file)
+                . ' --fast-list'
+            );
+            if (trim((string)$chk) === '') {
+                ptsb_log('Arquivo removido via job: '.$file);
+                return true;
+            }
+
+            ptsb_log('ptsb: falha ao remover '.$file.' via job.');
+            return false;
+    }
+
+    return true;
+}
+
+add_action('ptsb_run_admin_task', function($jobId) {
+    $jobId = (string)$jobId;
+    if ($jobId === '') {
+        return;
+    }
+
+    $jobs = ptsb_admin_jobs_get();
+    if (empty($jobs[$jobId]) || !is_array($jobs[$jobId])) {
+        return;
+    }
+
+    $job      = $jobs[$jobId];
+    $attempts = isset($job['attempts']) ? (int)$job['attempts'] : 0;
+
+    $ok = false;
+    try {
+        $ok = ptsb_process_admin_job($job);
+    } catch (Throwable $e) {
+        ptsb_log('ptsb: exceção em job administrativo '.$jobId.': '.$e->getMessage());
+        $ok = false;
+    }
+
+    if ($ok) {
+        unset($jobs[$jobId]);
+        ptsb_admin_jobs_save($jobs);
+        return;
+    }
+
+    $attempts++;
+    if ($attempts >= 3) {
+        unset($jobs[$jobId]);
+        ptsb_admin_jobs_save($jobs);
+        ptsb_log('ptsb: job administrativo '.$jobId.' atingiu o limite de tentativas.');
+        return;
+    }
+
+    $job['attempts'] = $attempts;
+    $jobs[$jobId] = $job;
+    ptsb_admin_jobs_save($jobs);
+    wp_schedule_single_event(time() + ptsb_admin_task_retry_delay($attempts), 'ptsb_run_admin_task', [$jobId]);
 }, 10, 1);
 
 function ptsb_back() {
@@ -428,71 +744,16 @@ update_option('ptsb_last_run_intent', [
             add_settings_error('ptsb','rn_same','O nome não foi alterado.', 'updated'); ptsb_back();
         }
 
-        // já existe arquivo com o novo nome?
-        $exists = shell_exec(
-            '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '.
-            ' rclone lsf '.escapeshellarg($cfg['remote']).' --files-only --format "p" '.
-            ' --include '.escapeshellarg($new).' --fast-list'
-        );
-        if (trim((string)$exists) !== '') {
-            add_settings_error('ptsb','rn_exists','Já existe um arquivo com esse nome no Drive.', 'error'); ptsb_back();
-        }
+        $taskId = ptsb_enqueue_admin_task('rename', [
+            'old'         => $old,
+            'new'         => $new,
+            'requested_by'=> get_current_user_id(),
+        ]);
 
-        // renomeia o arquivo principal
-        $mv = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-            . ' rclone moveto ' . escapeshellarg($cfg['remote'].$old) . ' ' . escapeshellarg($cfg['remote'].$new) . ' --fast-list 2>&1';
-        $out = shell_exec($mv);
-
-        // checa sucesso
-        $chkOld = shell_exec(
-            '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '.
-            ' rclone lsf '.escapeshellarg($cfg['remote']).' --files-only --format "p" '.
-            ' --include '.escapeshellarg($old).' --fast-list'
-        );
-
-// renomeia .json (se existir): .tar.gz -> .json
-$oldJson = ptsb_tar_to_json($old);
-$newJson = ptsb_tar_to_json($new);
-
-$hasJson = shell_exec(
-    '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-  . ' rclone lsf ' . escapeshellarg($cfg['remote'])
-  . ' --files-only --format "p" --include ' . escapeshellarg($oldJson) . ' --fast-list'
-);
-
-if (trim((string)$hasJson) !== '') {
-    $mvj = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-         . ' rclone moveto ' . escapeshellarg($cfg['remote'].$oldJson) . ' ' . escapeshellarg($cfg['remote'].$newJson) . ' --fast-list';
-    shell_exec($mvj);
-}
-
-
-        
-        $chkNew = shell_exec(
-            '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '.
-            ' rclone lsf '.escapeshellarg($cfg['remote']).' --files-only --format "p" '.
-            ' --include '.escapeshellarg($new).' --fast-list'
-        );
-
-        if (trim((string)$chkOld) === '' && trim((string)$chkNew) !== '') {
-            // renomeia .keep (se existir)
-            $oldKeep = $old.'.keep';
-            $newKeep = $new.'.keep';
-            $hasKeep = shell_exec(
-                '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '.
-                ' rclone lsf '.escapeshellarg($cfg['remote']).' --files-only --format "p" '.
-                ' --include '.escapeshellarg($oldKeep).' --fast-list'
-            );
-            if (trim((string)$hasKeep) !== '') {
-                $mvk = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-                     . ' rclone moveto ' . escapeshellarg($cfg['remote'].$oldKeep).' '.escapeshellarg($cfg['remote'].$newKeep).' --fast-list';
-                shell_exec($mvk);
-            }
-
-            ptsb_log('Arquivo renomeado via painel: '.$old.' ? '.$new);
-            add_settings_error('ptsb','rn_ok','Arquivo renomeado para: '.$new, 'updated');
+        if (!$taskId) {
+            add_settings_error('ptsb','rn_queue_fail','Falha ao agendar a renomeação. Tente novamente.', 'error');
         } else {
-            add_settings_error('ptsb','rn_fail','Falha ao renomear o arquivo. '.(is_string($out)?htmlspecialchars($out):''), 'error');
+            add_settings_error('ptsb','rn_queued','Renomeação agendada. A execução ocorrerá em segundo plano.', 'updated');
         }
 
         ptsb_back();
@@ -503,19 +764,18 @@ if (trim((string)$hasJson) !== '') {
         $file = sanitize_text_field($_POST['file']);
         $keep = isset($_POST['keep']) && $_POST['keep'] === '1';
 
-        if ($keep) {
-            $touch = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-                   . ' rclone touch ' . escapeshellarg($cfg['remote'].$file.'.keep') . ' --no-create-dirs';
-            $rcat  = 'printf "" | /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-                   . ' rclone rcat ' . escapeshellarg($cfg['remote'].$file.'.keep');
-            shell_exec($touch . ' || ' . $rcat);
-            add_settings_error('ptsb', 'keep_on', 'Marcado como "Sempre manter".', 'updated');
+        $taskId = ptsb_enqueue_admin_task('keep_toggle', [
+            'file'        => $file,
+            'keep'        => $keep ? 1 : 0,
+            'requested_by'=> get_current_user_id(),
+        ]);
+
+        if (!$taskId) {
+            add_settings_error('ptsb','keep_queue_fail','Falha ao agendar a atualização. Tente novamente.', 'error');
         } else {
-            $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-                 . ' rclone deletefile ' . escapeshellarg($cfg['remote'].$file.'.keep') . ' --fast-list';
-            shell_exec($cmd);
-            add_settings_error('ptsb', 'keep_off', 'Marca "Sempre manter" removida.', 'updated');
+            add_settings_error('ptsb','keep_queued','Atualização agendada. A execução ocorrerá em segundo plano.', 'updated');
         }
+
         ptsb_back();
     }
 
@@ -533,35 +793,18 @@ if (trim((string)$hasJson) !== '') {
             shell_exec($cmd);
             add_settings_error('ptsb', 'rs_started', 'Restaura&ccedil;&atilde;o iniciada para: '.$file.'.', 'updated');
 
-     } else {
-    $chk = shell_exec(
-        '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-      . ' rclone lsf ' . escapeshellarg($cfg['remote'])
-      . ' --files-only --format "p" --include ' . escapeshellarg($file.'.keep') . ' --fast-list'
-    );
-    if (trim((string)$chk) !== '') {
-        add_settings_error('ptsb', 'del_block', 'Este arquivo está marcado como "Sempre manter". Remova a marca antes de apagar.', 'error');
-        ptsb_back();
-    }
+        } else {
+            $taskId = ptsb_enqueue_admin_task('delete', [
+                'file'        => $file,
+                'requested_by'=> get_current_user_id(),
+            ]);
 
-// apaga o .tar.gz
-$cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-     . ' rclone deletefile ' . escapeshellarg($cfg['remote'].$file) . ' --fast-list';
-shell_exec($cmd);
-
-// apaga o sidecar JSON correto: foo.tar.gz -> foo.json
-$jsonPath = ptsb_tar_to_json($file);
-$cmd_json = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-          . ' rclone deletefile ' . escapeshellarg($cfg['remote'].$jsonPath) . ' --fast-list';
-shell_exec($cmd_json);
-
-delete_transient('ptsb_m_' . md5($file));
-
-  
-
-add_settings_error('ptsb', 'del_done', 'Arquivo (e JSON) removidos do Drive: '.$file, 'updated');
-
-}
+            if (!$taskId) {
+                add_settings_error('ptsb','del_queue_fail','Falha ao agendar a remoção. Tente novamente.', 'error');
+            } else {
+                add_settings_error('ptsb','del_queued','Remoção agendada. A execução ocorrerá em segundo plano.', 'updated');
+            }
+        }
 
         ptsb_back();
     }

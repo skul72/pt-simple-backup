@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.2] - 2025-11-01
+- Renomear, marcar "Sempre manter" e remover arquivos agora são agendados e executados via WP-Cron (sem `rclone` direto no painel).
+- Adição de fila e reprocessamento básico para jobs administrativos assíncronos.
+- Ajuste das mensagens do painel para indicar operações agendadas.
+
 ## [1.0.1] - 2025-10-31
 - Agendamento dos backups manuais via WP-Cron para evitar processamento pesado na requisição do painel.
 
