@@ -206,6 +206,11 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
          . 'KEEP='       . escapeshellarg($set['keep_days']) . ' '
          . 'PARTS='      . escapeshellarg($partsCsv);
 
+    $tuningJson = wp_json_encode(ptsb_rclone_tuning(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($tuningJson !== false) {
+        $env .= ' RCLONE_TUNING=' . escapeshellarg($tuningJson);
+    }
+
     $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
     shell_exec($cmd);
