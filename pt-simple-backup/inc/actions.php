@@ -340,6 +340,8 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
              .  ' PTS_CHUNK_PLAN_VERSION=' . escapeshellarg((string)$planData['version']);
     }
 
+    $env .= ptsb_rclone_env_fragment();
+
     // guarda as partes usadas neste disparo (fallback para a notificação)
     update_option('ptsb_last_run_parts', (string)$partsCsv, true);
 
@@ -526,9 +528,9 @@ function ptsb_process_admin_job(array $job): bool {
                 $envBase
                 . ' rclone lsf '
                 . escapeshellarg($remote)
+                . ptsb_rclone_list_flags_suffix()
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($new)
-                . ' --fast-list'
             );
             if (trim((string)$exists) !== '') {
                 ptsb_log('ptsb: job rename abortado, destino já existe: '.$new);
@@ -540,24 +542,24 @@ function ptsb_process_admin_job(array $job): bool {
                    . escapeshellarg($remote.$old)
                    . ' '
                    . escapeshellarg($remote.$new)
-                   . ' --fast-list 2>&1';
+                   . ptsb_rclone_flags_suffix() . ' 2>&1';
             $out = shell_exec($mvCmd);
 
             $chkOld = shell_exec(
                 $envBase
                 . ' rclone lsf '
                 . escapeshellarg($remote)
+                . ptsb_rclone_list_flags_suffix()
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($old)
-                . ' --fast-list'
             );
             $chkNew = shell_exec(
                 $envBase
                 . ' rclone lsf '
                 . escapeshellarg($remote)
+                . ptsb_rclone_list_flags_suffix()
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($new)
-                . ' --fast-list'
             );
 
             if (trim((string)$chkOld) !== '' || trim((string)$chkNew) === '') {
@@ -571,9 +573,9 @@ function ptsb_process_admin_job(array $job): bool {
                 $envBase
                 . ' rclone lsf '
                 . escapeshellarg($remote)
+                . ptsb_rclone_list_flags_suffix()
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($oldJson)
-                . ' --fast-list'
             );
             if (trim((string)$hasJson) !== '') {
                 $jsonMove = $envBase
@@ -581,7 +583,7 @@ function ptsb_process_admin_job(array $job): bool {
                           . escapeshellarg($remote.$oldJson)
                           . ' '
                           . escapeshellarg($remote.$newJson)
-                          . ' --fast-list';
+                          . ptsb_rclone_flags_suffix();
                 shell_exec($jsonMove);
             }
 
@@ -590,9 +592,9 @@ function ptsb_process_admin_job(array $job): bool {
                 $envBase
                 . ' rclone lsf '
                 . escapeshellarg($remote)
+                . ptsb_rclone_list_flags_suffix()
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($oldKeep)
-                . ' --fast-list'
             );
             if (trim((string)$hasKeep) !== '') {
                 $newKeep = $new.'.keep';
@@ -601,7 +603,7 @@ function ptsb_process_admin_job(array $job): bool {
                           . escapeshellarg($remote.$oldKeep)
                           . ' '
                           . escapeshellarg($remote.$newKeep)
-                          . ' --fast-list';
+                          . ptsb_rclone_flags_suffix();
                 shell_exec($keepMove);
             }
 
@@ -621,19 +623,21 @@ function ptsb_process_admin_job(array $job): bool {
                 $touch = $envBase
                        . ' rclone touch '
                        . escapeshellarg($remote.$file.'.keep')
-                       . ' --no-create-dirs';
+                       . ' --no-create-dirs'
+                       . ptsb_rclone_flags_suffix();
                 $rcat  = 'printf "" | '.$envBase
                        . ' rclone rcat '
-                       . escapeshellarg($remote.$file.'.keep');
+                       . escapeshellarg($remote.$file.'.keep')
+                       . ptsb_rclone_flags_suffix();
                 shell_exec($touch . ' || ' . $rcat);
 
                 $chk = shell_exec(
                     $envBase
                     . ' rclone lsf '
                     . escapeshellarg($remote)
+                    . ptsb_rclone_list_flags_suffix()
                     . ' --files-only --format "p" --include '
                     . escapeshellarg($file.'.keep')
-                    . ' --fast-list'
                 );
                 if (trim((string)$chk) === '') {
                     ptsb_log('ptsb: falha ao marcar Sempre manter para '.$file);
@@ -647,16 +651,16 @@ function ptsb_process_admin_job(array $job): bool {
             $delKeep = $envBase
                      . ' rclone deletefile '
                      . escapeshellarg($remote.$file.'.keep')
-                     . ' --fast-list';
+                     . ptsb_rclone_flags_suffix();
             shell_exec($delKeep);
 
             $chk = shell_exec(
                 $envBase
                 . ' rclone lsf '
                 . escapeshellarg($remote)
+                . ptsb_rclone_list_flags_suffix()
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($file.'.keep')
-                . ' --fast-list'
             );
             if (trim((string)$chk) !== '') {
                 ptsb_log('ptsb: falha ao remover Sempre manter de '.$file);
@@ -678,9 +682,9 @@ function ptsb_process_admin_job(array $job): bool {
                 $envBase
                 . ' rclone lsf '
                 . escapeshellarg($remote)
+                . ptsb_rclone_list_flags_suffix()
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($file.'.keep')
-                . ' --fast-list'
             );
             if (trim((string)$keep) !== '') {
                 ptsb_log('ptsb: remoção ignorada, arquivo marcado como Sempre manter: '.$file);
@@ -690,14 +694,14 @@ function ptsb_process_admin_job(array $job): bool {
             $delTar = $envBase
                     . ' rclone deletefile '
                     . escapeshellarg($remote.$file)
-                    . ' --fast-list';
+                    . ptsb_rclone_flags_suffix();
             shell_exec($delTar);
 
             $jsonPath = ptsb_tar_to_json($file);
             $delJson = $envBase
                      . ' rclone deletefile '
                      . escapeshellarg($remote.$jsonPath)
-                     . ' --fast-list';
+                     . ptsb_rclone_flags_suffix();
             shell_exec($delJson);
 
             delete_transient('ptsb_m_' . md5($file));
@@ -706,9 +710,9 @@ function ptsb_process_admin_job(array $job): bool {
                 $envBase
                 . ' rclone lsf '
                 . escapeshellarg($remote)
+                . ptsb_rclone_list_flags_suffix()
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($file)
-                . ' --fast-list'
             );
             if (trim((string)$chk) === '') {
                 ptsb_log('Arquivo removido via job: '.$file);

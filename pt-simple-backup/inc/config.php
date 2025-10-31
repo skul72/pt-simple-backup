@@ -11,22 +11,32 @@ function ptsb_cfg() {
         'lock'           => '/tmp/wpbackup.lock',
         'script_backup'  => '/home/plugintema.com/Scripts/wp-backup-to-gdrive.sh',
         'script_restore' => '/home/plugintema.com/Scripts/wp-restore-from-archive.sh',
-        'download_dir'   => '/home/plugintema.com/Backups/downloads',
-        'drive_url'      => 'https://drive.google.com/drive/u/0/folders/18wIaInN0d0ftKhsi1BndrKmkVuOQkFoO',
-
-             'keep_days_def'  => 12,
+        'download_dir'             => '/home/plugintema.com/Backups/downloads',
+        'drive_url'                => 'https://drive.google.com/drive/u/0/folders/18wIaInN0d0ftKhsi1BndrKmkVuOQkFoO',
+        'keep_days_def'            => 12,
+        'rclone_fast_list'         => false,
+        'rclone_checkers'          => 4,
+        'rclone_transfers'         => 2,
+        'rclone_retries'           => 3,
+        'rclone_low_level_retries' => 5,
+        'rclone_retries_sleep'     => '15s',
+        'rclone_retries_sleep_inc' => '15s',
+        'rclone_retries_sleep_max' => '2m',
+        'rclone_delta_max_age'     => '72h',
+        'rclone_delta_month_span'  => 2,
+        'rclone_delta_update'      => true,
 
         // agendamento
-        'tz_string'      => 'America/Sao_Paulo',
-        'cron_hook'      => 'ptsb_cron_tick',
-        'cron_sched'     => 'ptsb_minutely',   // 60s (visitor-based)
-        'max_per_day'    => 6,
-        'min_gap_min'    => 10,
-        'miss_window'    => 15,
-        'queue_timeout'  => 5400,              // 90min
-        'lock_ttl'       => 5400,              // TTL do lock otimista (s)
-        'log_max_mb' => 3, // tamanho máx. do log
-'log_keep'   => 5, // quantos arquivos rotacionados manter
+        'tz_string'                => 'America/Sao_Paulo',
+        'cron_hook'                => 'ptsb_cron_tick',
+        'cron_sched'               => 'ptsb_minutely',   // 60s (visitor-based)
+        'max_per_day'              => 6,
+        'min_gap_min'              => 10,
+        'miss_window'              => 15,
+        'queue_timeout'            => 5400,              // 90min
+        'lock_ttl'                 => 5400,              // TTL do lock otimista (s)
+        'log_max_mb'               => 3, // tamanho máx. do log
+        'log_keep'                 => 5, // quantos arquivos rotacionados manter
 
     ];
     /**
