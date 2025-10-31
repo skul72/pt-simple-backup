@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.5] - 2025-11-04
+- Quebra o disparo de backups em jobs independentes por grupo de partes (core, temas, plugins, mídia/misc), evitando picos de CPU/IO.
+- Propaga metadados de lote/parte para os scripts de shell via variáveis de ambiente para checkpoints.
+
 ## [1.0.4] - 2025-11-03
 - Cria manifest incremental em disco para a lista de backups, reutilizando a varredura do Drive por até 6 horas.
 - Invalida automaticamente o manifest local ao iniciar novos backups para garantir atualização pontual.
