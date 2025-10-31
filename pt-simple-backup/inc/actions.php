@@ -60,6 +60,105 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     shell_exec($cmd);
 }
 
+function ptsb_backup_jobs_get(): array {
+    $jobs = get_option('ptsb_backup_jobs', []);
+    return is_array($jobs) ? $jobs : [];
+}
+
+function ptsb_backup_jobs_save(array $jobs): void {
+    update_option('ptsb_backup_jobs', $jobs, false);
+}
+
+function ptsb_enqueue_backup_job(array $job, int $delay = 5): ?string {
+    if (empty($job['parts_csv'])) {
+        return null;
+    }
+
+    $jobs = ptsb_backup_jobs_get();
+    $id   = $job['id'] ?? ptsb_uuid4();
+    $job['id'] = $id;
+    $job['created_at'] = isset($job['created_at']) ? (int)$job['created_at'] : time();
+    $job['attempts']   = isset($job['attempts']) ? (int)$job['attempts'] : 0;
+
+    $jobs[$id] = $job;
+    ptsb_backup_jobs_save($jobs);
+
+    $delay = max(1, $delay);
+    if (!wp_next_scheduled('ptsb_run_backup_job', [$id])) {
+        wp_schedule_single_event(time() + $delay, 'ptsb_run_backup_job', [$id]);
+    }
+
+    if (!wp_doing_cron()) {
+        if (function_exists('spawn_cron')) {
+            spawn_cron(time());
+        }
+    }
+
+    return $id;
+}
+
+function ptsb_reschedule_backup_job(string $jobId, array $job, array $jobs, int $delay): void {
+    $job['attempts'] = isset($job['attempts']) ? ((int)$job['attempts']) + 1 : 1;
+    $jobs[$jobId] = $job;
+    ptsb_backup_jobs_save($jobs);
+    $delay = max(5, $delay);
+    wp_schedule_single_event(time() + $delay, 'ptsb_run_backup_job', [$jobId]);
+}
+
+function ptsb_backup_job_default_delay(int $attempts): int {
+    $base = 15 * ($attempts + 1);
+    return (int) min(600, max(5, $base));
+}
+
+add_action('ptsb_run_backup_job', function($jobId){
+    $jobId = (string)$jobId;
+    if ($jobId === '') {
+        return;
+    }
+
+    $jobs = ptsb_backup_jobs_get();
+    if (empty($jobs[$jobId]) || !is_array($jobs[$jobId])) {
+        return;
+    }
+
+    $job = $jobs[$jobId];
+    $cfg = ptsb_cfg();
+
+    if (file_exists($cfg['lock'])) {
+        ptsb_reschedule_backup_job($jobId, $job, $jobs, ptsb_backup_job_default_delay((int)($job['attempts'] ?? 0)));
+        return;
+    }
+
+    unset($jobs[$jobId]);
+    ptsb_backup_jobs_save($jobs);
+
+    $partsCsv = (string)($job['parts_csv'] ?? '');
+    if ($partsCsv === '') {
+        return;
+    }
+
+    $prefix    = array_key_exists('prefix', $job) ? $job['prefix'] : null;
+    $keepDays  = array_key_exists('keep_days', $job) ? $job['keep_days'] : null;
+    $keepFor   = !empty($job['keep_forever']) ? 1 : 0;
+    $origin    = isset($job['origin']) ? (string)$job['origin'] : 'manual';
+    $effPrefix = ($prefix !== null && $prefix !== '') ? (string)$prefix : ptsb_cfg()['prefix'];
+
+    if ($keepFor) {
+        ptsb_plan_mark_keep_next($effPrefix);
+    }
+
+    $intentKeep = $keepDays === null ? (int)ptsb_settings()['keep_days'] : (int)$keepDays;
+    update_option('ptsb_last_run_intent', [
+        'prefix'       => $effPrefix,
+        'keep_days'    => $intentKeep,
+        'keep_forever' => $keepFor,
+        'origin'       => $origin,
+        'started_at'   => time(),
+    ], true);
+
+    ptsb_start_backup($partsCsv, $prefix, $keepDays);
+}, 10, 1);
+
 function ptsb_back() {
     $tab = 'backup';
     $args = ['page'=>'pt-simple-backup', '_ts'=>time()];
@@ -175,12 +274,23 @@ update_option('ptsb_last_run_intent', [
     'started_at'   => time(),
 ], true);
 
-ptsb_start_backup($partsCsv, $prefix, $manual_days);
+    $jobId = ptsb_enqueue_backup_job([
+        'parts_csv'    => $partsCsv,
+        'prefix'       => $prefix,
+        'keep_days'    => $manual_days,
+        'keep_forever' => $keep_forever ? 1 : 0,
+        'origin'       => 'manual',
+    ]);
+
+    if (!$jobId) {
+        add_settings_error('ptsb', 'bk_queue_fail', 'Falha ao agendar o backup. Tente novamente.', 'error');
+        ptsb_back();
+    }
 
 
     // 6) Mensagem
     $human = ptsb_parts_to_labels($partsCsv);
-    $txt = 'Backup disparado'.($human ? ' (incluindo: '.esc_html(implode(', ', $human)).')' : '').'. Acompanhe abaixo.';
+    $txt = 'Backup agendado'.($human ? ' (incluindo: '.esc_html(implode(', ', $human)).')' : '').'. Execução em segundo plano.';
     add_settings_error('ptsb', 'bk_started', $txt, 'updated');
     ptsb_back();
 }
