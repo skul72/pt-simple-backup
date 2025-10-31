@@ -28,10 +28,10 @@ function ptsb_auto_save($enabled, $qty, $times, $state=null, $mode=null, $mcfg=n
     $cfg = ptsb_cfg();
     update_option('ptsb_auto_enabled', (bool)$enabled, true);
     update_option('ptsb_auto_qty', max(1, min((int)$qty, $cfg['max_per_day'])), true);
-    update_option('ptsb_auto_times', array_values($times), true); // legado
-    if ($mode !== null) update_option('ptsb_auto_mode', $mode, true);
-    if ($mcfg !== null) update_option('ptsb_auto_cfg', $mcfg, true);
-    if ($state !== null) update_option('ptsb_auto_state', $state, true);
+    update_option('ptsb_auto_times', array_values($times), false); // legado
+    if ($mode !== null) update_option('ptsb_auto_mode', $mode, false);
+    if ($mcfg !== null) update_option('ptsb_auto_cfg', $mcfg, false);
+    if ($state !== null) update_option('ptsb_auto_state', $state, false);
 }
 
 function ptsb_parse_time_hm($s) {
@@ -121,7 +121,7 @@ function ptsb_skipmap_get(): array {
     return $out;
 }
 
-function ptsb_skipmap_save(array $m): void { update_option('ptsb_skip_slots', $m, true); }
+function ptsb_skipmap_save(array $m): void { update_option('ptsb_skip_slots', $m, false); }
 
 function ptsb_skip_key(DateTimeImmutable $dt): string { return $dt->format('Y-m-d H:i'); }
 
@@ -147,7 +147,7 @@ function ptsb_uuid4(){
 function ptsb_cycles_get(){ $c = get_option('ptsb_cycles', []); return is_array($c)? $c: []; }
 
 function ptsb_cycles_save(array $c){
-    update_option('ptsb_cycles', array_values($c), true);
+    update_option('ptsb_cycles', array_values($c), false);
     // Qualquer alteração nas rotinas desativa a auto-migração para sempre
     update_option('ptsb_cycles_legacy_migrated', 1, true);
 }
@@ -162,7 +162,7 @@ function ptsb_cycles_state_get(){
     return $s;
 }
 
-function ptsb_cycles_state_save(array $s){ update_option('ptsb_cycles_state', $s, true); }
+function ptsb_cycles_state_save(array $s){ update_option('ptsb_cycles_state', $s, false); }
 
 function ptsb_cycles_global_get(){
     $cfg = ptsb_cfg();
@@ -189,7 +189,7 @@ function ptsb_cycles_global_save(array $g){
     $out['merge_dupes'] = (bool)$out['merge_dupes'];
     $out['policy']      = in_array($out['policy'], ['skip','queue'], true) ? $out['policy'] : 'skip';
     $out['min_gap_min'] = max(1, (int)$out['min_gap_min']);
-    update_option('ptsb_cycles_global', $out, true);
+    update_option('ptsb_cycles_global', $out, false);
 }
 
 function ptsb_cycle_today_slots(array $cycle, DateTimeImmutable $refDay){
@@ -436,7 +436,7 @@ if (!empty($state['queued']['keep_forever'])) {
         'keep_forever' => !empty($state['queued']['keep_forever']) ? 1 : 0,
         'origin'       => 'routine',
         'started_at'   => time(),
-    ], true);
+    ], false);
 
 ptsb_start_backup($partsCsv, $qpref, $qdays);
 
@@ -596,7 +596,7 @@ update_option('ptsb_last_run_intent', [
     'keep_forever' => !empty($slot['keep_forever']) ? 1 : 0,
     'origin'       => 'routine',
     'started_at'   => time(),
-], true);
+], false);
 
              ptsb_start_backup($partsCsv, $slot['prefix'] ?? null, $slot['keep_days'] ?? null);
             foreach ($slot['cycle_ids'] as $cid){

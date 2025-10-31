@@ -104,38 +104,11 @@ function ptsb_backup_upload_scopes(): array {
 }
 
 function ptsb_backup_plan_storage_dir(): ?string {
-    if (!function_exists('wp_upload_dir')) {
-        return null;
-    }
-
-    $up = wp_upload_dir(null, false);
-    $base = isset($up['basedir']) ? (string)$up['basedir'] : '';
-    if ($base === '') {
-        return null;
-    }
-
-    $dir = trailingslashit($base) . 'pt-simple-backup';
-    if (!@is_dir($dir)) {
-        if (!function_exists('wp_mkdir_p') || !wp_mkdir_p($dir)) {
-            return null;
-        }
-    }
-
-    return $dir;
+    return ptsb_upload_storage_dir();
 }
 
 function ptsb_backup_plan_cleanup(string $dir, int $maxAge = 86400): void {
-    $files = @glob(rtrim($dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'plan-*.json');
-    if (!is_array($files)) {
-        return;
-    }
-    $now = time();
-    foreach ($files as $file) {
-        $mtime = @filemtime($file);
-        if ($mtime !== false && ($now - $mtime) > $maxAge) {
-            @unlink($file);
-        }
-    }
+    ptsb_blob_cleanup('plan-*.json', $maxAge, $dir);
 }
 
 function ptsb_backup_plan_write(array $plan): ?array {
@@ -150,20 +123,15 @@ function ptsb_backup_plan_write(array $plan): ?array {
 
     ptsb_backup_plan_cleanup($dir, 12 * HOUR_IN_SECONDS);
 
-    $path = rtrim($dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'plan-' . $plan['id'] . '.json';
-    $json = wp_json_encode($plan, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-    if ($json === false) {
-        return null;
-    }
-
-    $written = @file_put_contents($path, $json);
-    if ($written === false) {
+    $blob = ptsb_blob_write_json('plan-' . (string) $plan['id'], $plan);
+    if ($blob === null) {
         return null;
     }
 
     return [
-        'path' => $path,
-        'plan' => $plan,
+        'path'  => $blob['path'],
+        'plan'  => $plan,
+        'bytes' => (int) $blob['bytes'],
     ];
 }
 
@@ -495,11 +463,15 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     if ($plan) {
         $planMeta = ptsb_backup_plan_write($plan);
         if ($planMeta) {
-            update_option('ptsb_last_chunk_plan', [
-                'created_at' => time(),
-                'path'       => $planMeta['path'],
-                'plan'       => $planMeta['plan'],
-            ], false);
+            $summary = [
+                'created_at'   => time(),
+                'path'         => $planMeta['path'],
+                'plan_id'      => (string) ($plan['id'] ?? ''),
+                'total_chunks' => isset($plan['total_chunks']) ? (int) $plan['total_chunks'] : 0,
+                'version'      => isset($plan['version']) ? (int) $plan['version'] : 0,
+                'bytes'        => isset($planMeta['bytes']) ? (int) $planMeta['bytes'] : 0,
+            ];
+            update_option('ptsb_last_chunk_plan', $summary, false);
         }
     }
 
@@ -515,11 +487,11 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
          . 'PARTS='            . escapeshellarg($partsCsv);
 
     if ($planMeta) {
-        $planData = $planMeta['plan'];
+        $planData = $plan;
         $env .= ' PTS_CHUNK_PLAN_FILE=' . escapeshellarg($planMeta['path'])
-             .  ' PTS_CHUNK_PLAN_ID='   . escapeshellarg($planData['id'])
-             .  ' PTS_CHUNK_PLAN_TOTAL=' . escapeshellarg((string)$planData['total_chunks'])
-             .  ' PTS_CHUNK_PLAN_VERSION=' . escapeshellarg((string)$planData['version']);
+             .  ' PTS_CHUNK_PLAN_ID='   . escapeshellarg((string)($planData['id'] ?? ''))
+             .  ' PTS_CHUNK_PLAN_TOTAL=' . escapeshellarg((string)($planData['total_chunks'] ?? ''))
+             .  ' PTS_CHUNK_PLAN_VERSION=' . escapeshellarg((string)($planData['version'] ?? ''));
     }
 
     $tuningJson = wp_json_encode(ptsb_rclone_tuning(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -674,7 +646,7 @@ add_action('ptsb_run_backup_job', function($jobId){
         'keep_forever' => $keepFor,
         'origin'       => $origin,
         'started_at'   => time(),
-    ], true);
+    ], false);
 
     ptsb_start_backup($partsCsv, $prefix, $keepDays);
 }, 10, 1);
@@ -1182,7 +1154,7 @@ update_option('ptsb_last_run_intent', [
     'keep_forever' => $keep_forever ? 1 : 0,
     'origin'       => 'manual',
     'started_at'   => time(),
-], true);
+], false);
 
     $jobId = ptsb_enqueue_backup_job([
         'parts_csv'    => $partsCsv,

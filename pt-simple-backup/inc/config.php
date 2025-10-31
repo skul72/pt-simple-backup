@@ -44,6 +44,91 @@ function ptsb_cfg() {
     return $cfg;
 }
 
+function ptsb_upload_storage_dir(): ?string {
+    if (!function_exists('wp_upload_dir')) {
+        return null;
+    }
+
+    $up   = wp_upload_dir(null, false);
+    $base = isset($up['basedir']) ? (string) $up['basedir'] : '';
+    if ($base === '') {
+        return null;
+    }
+
+    $dir = rtrim($base, "/\\") . DIRECTORY_SEPARATOR . 'pt-simple-backup';
+    if (!@is_dir($dir)) {
+        if (!function_exists('wp_mkdir_p') || !wp_mkdir_p($dir)) {
+            return null;
+        }
+    }
+
+    return $dir;
+}
+
+function ptsb_sanitize_blob_key(string $key): string {
+    $key = preg_replace('/[^A-Za-z0-9._-]+/', '-', $key);
+    $key = trim((string) $key, '.-_');
+    if ($key === '') {
+        $key = 'blob-' . substr(sha1($key . microtime(true)), 0, 12);
+    }
+    return $key;
+}
+
+function ptsb_upload_storage_path(string $key, string $suffix = '.json'): ?string {
+    $dir = ptsb_upload_storage_dir();
+    if ($dir === null) {
+        return null;
+    }
+
+    $suffix = $suffix !== '' && $suffix[0] !== '.' ? '.' . $suffix : $suffix;
+    $file   = ptsb_sanitize_blob_key($key) . $suffix;
+
+    return rtrim($dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file;
+}
+
+function ptsb_blob_write_json(string $key, $data): ?array {
+    $path = ptsb_upload_storage_path($key, '.json');
+    if ($path === null) {
+        return null;
+    }
+
+    $json = wp_json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    if ($json === false) {
+        return null;
+    }
+
+    $written = @file_put_contents($path, $json);
+    if ($written === false) {
+        return null;
+    }
+
+    return [
+        'path'  => $path,
+        'bytes' => (int) $written,
+    ];
+}
+
+function ptsb_blob_cleanup(string $pattern, int $maxAge = 86400, ?string $dir = null): void {
+    $dir = $dir ?? ptsb_upload_storage_dir();
+    if ($dir === null) {
+        return;
+    }
+
+    $globPattern = rtrim($dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $pattern;
+    $files       = @glob($globPattern);
+    if (!is_array($files)) {
+        return;
+    }
+
+    $now = time();
+    foreach ($files as $file) {
+        $mtime = @filemtime($file);
+        if ($mtime !== false && ($now - $mtime) > $maxAge) {
+            @unlink($file);
+        }
+    }
+}
+
 function ptsb_tz() {
     $cfg = ptsb_cfg();
     try { return new DateTimeZone($cfg['tz_string']); } catch(Throwable $e){ return new DateTimeZone('America/Sao_Paulo'); }

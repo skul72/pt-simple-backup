@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.4] - 2025-11-09
+- Move planos de chunks e payloads volumosos para arquivos JSON em `/wp-content/uploads/pt-simple-backup/`, mantendo apenas metadados leves nas opções.
+- Marca opções com arrays grandes como `autoload=no`, evitando leitura automática no carregamento de cada página.
+- Garante limpeza periódica dos blobs persistidos e preserva o diretório dedicado de armazenamento.
+
 ## [1.2.3] - 2025-11-08
 - Carrega "Próximas Execuções" e "Últimas execuções" via AJAX, limitando a 20 itens por requisição e evitando carregamento pesado na renderização inicial.
 - Implementa paginação dinâmica no painel, mantendo filtros e formulários responsivos sem recarregar a página.
