@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.0] - 2025-11-05
+- Planeja chunks de backup antes de disparar o script externo, organizando partes em jobs sequenciais sem multiplicar entradas no painel.
+- Gera manifestos de chunk em JSON acessíveis pelo script (`PTS_CHUNK_PLAN_*`) e higieniza arquivos antigos automaticamente.
+- Segmenta uploads por ano/mês quando disponíveis, preservando fallback único caso não haja estrutura padrão.
+
+## [1.1.1] - 2025-11-04
+- Reverte o enfileiramento de chunks garantindo que cada agendamento gere apenas um arquivo de backup.
+- Restaura o disparo único do script externo mantendo o registro correto das partes utilizadas.
+
 ## [1.0.4] - 2025-11-03
 - Cria manifest incremental em disco para a lista de backups, reutilizando a varredura do Drive por até 6 horas.
 - Invalida automaticamente o manifest local ao iniciar novos backups para garantir atualização pontual.
