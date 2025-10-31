@@ -190,7 +190,9 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
     if (!ptsb_can_shell()) return;
-    if (file_exists($cfg['lock'])) return;
+    if (!ptsb_lock_acquire('parts_trigger')) {
+        return;
+    }
 
     $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . 'REMOTE='     . escapeshellarg($cfg['remote'])     . ' '

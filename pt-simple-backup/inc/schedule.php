@@ -407,7 +407,10 @@ if (!$cycles) {
     // ====== NOVA ENGINE: rotinas ======
     $g       = ptsb_cycles_global_get();
     $state   = ptsb_cycles_state_get();
-    $running = file_exists($cfg['lock']);
+    $running = ptsb_lock_is_locked();
+    if (!$running) {
+        ptsb_lock_release_when_idle();
+    }
     // carregar/limpar mapa de execuções a ignorar
     ptsb_skipmap_gc();
     $skipmap = ptsb_skipmap_get();

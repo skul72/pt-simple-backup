@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.3] - 2025-11-02
+- Implementa lock otimista com TTL para evitar disparos concorrentes de backups.
+- Atualiza verificações de status liberando o lock assim que o processo encerra.
+
 ## [1.0.2] - 2025-11-01
 - Renomear, marcar "Sempre manter" e remover arquivos agora são agendados e executados via WP-Cron (sem `rclone` direto no painel).
 - Adição de fila e reprocessamento básico para jobs administrativos assíncronos.

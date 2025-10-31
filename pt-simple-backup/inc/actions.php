@@ -7,7 +7,10 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
     if (!ptsb_can_shell()) return;
-    if (file_exists($cfg['lock'])) { return; }
+
+    if (!ptsb_lock_acquire('backup_start')) {
+        return;
+    }
 
     ptsb_log_rotate_if_needed();
 
@@ -168,7 +171,7 @@ add_action('ptsb_run_backup_job', function($jobId){
     $job = $jobs[$jobId];
     $cfg = ptsb_cfg();
 
-    if (file_exists($cfg['lock'])) {
+    if (ptsb_lock_is_locked()) {
         ptsb_reschedule_backup_job($jobId, $job, $jobs, ptsb_backup_job_default_delay((int)($job['attempts'] ?? 0)));
         return;
     }
@@ -527,7 +530,7 @@ add_action('admin_post_ptsb_do', function () {
    /* ===== Disparar manual (topo) — lendo as letras D,P,T,W,S,M,O ===== */
 if ($act === 'backup_now') {
     if (!ptsb_can_shell()) { add_settings_error('ptsb', 'noshell', 'shell_exec desabilitado no PHP.', 'error'); ptsb_back(); }
-    if (file_exists($cfg['lock'])) {
+    if (ptsb_lock_is_locked()) {
         add_settings_error('ptsb', 'bk_running', 'J&aacute; existe um backup em execu&ccedil;&atilde;o. Aguarde concluir antes de iniciar outro.', 'error');
         ptsb_back();
     }

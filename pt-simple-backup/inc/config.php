@@ -24,6 +24,7 @@ function ptsb_cfg() {
         'min_gap_min'    => 10,
         'miss_window'    => 15,
         'queue_timeout'  => 5400,              // 90min
+        'lock_ttl'       => 5400,              // TTL do lock otimista (s)
         'log_max_mb' => 3, // tamanho máx. do log
 'log_keep'   => 5, // quantos arquivos rotacionados manter
 
@@ -117,6 +118,159 @@ function ptsb_plan_mark_keep_next($prefix){
     $prefix = (string)$prefix;
     if ($prefix === '') $prefix = ptsb_cfg()['prefix'];
     update_option('ptsb_mark_keep_plan', ['prefix'=>$prefix, 'set_at'=>time()], true);
+}
+
+function ptsb_lock_option_name(): string {
+    return 'ptsb_lock_active';
+}
+
+function ptsb_lock_defaults(array $lock = []): array {
+    return $lock + [
+        'pid'      => 0,
+        'timestamp'=> 0,
+        'token'    => '',
+        'context'  => '',
+    ];
+}
+
+function ptsb_lock_ttl(): int {
+    $cfg = ptsb_cfg();
+    $ttl = (int)($cfg['lock_ttl'] ?? $cfg['queue_timeout'] ?? 3600);
+    return max(60, $ttl);
+}
+
+function ptsb_lock_new_token(): string {
+    try {
+        return bin2hex(random_bytes(6));
+    } catch (Throwable $e) {
+        return substr(sha1(uniqid('', true)), 0, 12);
+    }
+}
+
+function ptsb_lock_read(): array {
+    $lock = get_option(ptsb_lock_option_name(), []);
+    if (!is_array($lock)) {
+        delete_option(ptsb_lock_option_name());
+        return [];
+    }
+    return ptsb_lock_defaults($lock);
+}
+
+function ptsb_lock_write(array $lock): void {
+    $lock = ptsb_lock_defaults($lock);
+    if (!add_option(ptsb_lock_option_name(), $lock, '', 'no')) {
+        update_option(ptsb_lock_option_name(), $lock, false);
+    }
+}
+
+function ptsb_lock_clear(): void {
+    delete_option(ptsb_lock_option_name());
+}
+
+function ptsb_lock_is_expired(array $lock, ?int $now = null): bool {
+    $now = $now ?? time();
+    $ts  = (int)($lock['timestamp'] ?? 0);
+    if ($ts <= 0) {
+        return true;
+    }
+    return ($now - $ts) > ptsb_lock_ttl();
+}
+
+function ptsb_lock_is_locked(): bool {
+    $cfg  = ptsb_cfg();
+    $file = (string)($cfg['lock'] ?? '');
+    $now  = time();
+    $lock = ptsb_lock_read();
+
+    if ($file !== '' && @file_exists($file)) {
+        $lock['timestamp'] = $now;
+        if (empty($lock['pid']) && function_exists('getmypid')) {
+            $lock['pid'] = (int) getmypid();
+        }
+        if (empty($lock['token'])) {
+            $lock['token'] = ptsb_lock_new_token();
+        }
+        $lock['context'] = $lock['context'] ?: 'external';
+        ptsb_lock_write($lock);
+        return true;
+    }
+
+    if (!$lock) {
+        return false;
+    }
+
+    if (($lock['context'] ?? '') === 'external') {
+        ptsb_lock_release(null, true);
+        return false;
+    }
+
+    if (ptsb_lock_is_expired($lock, $now)) {
+        ptsb_lock_clear();
+        return false;
+    }
+
+    return true;
+}
+
+function ptsb_lock_acquire(string $context = 'generic', int $attempts = 3): ?string {
+    $pid   = function_exists('getmypid') ? (int) getmypid() : 0;
+    $token = ptsb_lock_new_token();
+    $now   = time();
+    $data  = [
+        'pid'       => $pid,
+        'timestamp' => $now,
+        'token'     => $token,
+        'context'   => $context,
+    ];
+
+    for ($i = 0; $i < $attempts; $i++) {
+        if (!ptsb_lock_is_locked()) {
+            if (add_option(ptsb_lock_option_name(), ptsb_lock_defaults($data), '', 'no')) {
+                return $token;
+            }
+
+            $current = ptsb_lock_read();
+            if (!$current || ptsb_lock_is_expired($current, $now)) {
+                ptsb_lock_write($data);
+                return $token;
+            }
+        }
+
+        usleep((int) min(500000, 50000 * ($i + 1))); // backoff exponencial simples
+    }
+
+    return null;
+}
+
+function ptsb_lock_release(?string $token = null, bool $force = false): void {
+    $lock = ptsb_lock_read();
+    if (!$lock) {
+        return;
+    }
+
+    if ($force || $token === null || (string) $lock['token'] === (string) $token) {
+        ptsb_lock_clear();
+    }
+}
+
+function ptsb_lock_release_when_idle(): void {
+    $cfg  = ptsb_cfg();
+    $file = (string)($cfg['lock'] ?? '');
+    if ($file !== '' && @file_exists($file)) {
+        return;
+    }
+
+    $lock = ptsb_lock_read();
+    if (!$lock) {
+        return;
+    }
+
+    $age = time() - (int) ($lock['timestamp'] ?? 0);
+    if ($age < 30 && !$lock['context']) {
+        return;
+    }
+
+    ptsb_lock_release(null, true);
 }
 
 function ptsb_mask_email($email, $keep = 7) {
