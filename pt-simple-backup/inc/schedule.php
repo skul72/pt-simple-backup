@@ -438,7 +438,7 @@ if (!empty($state['queued']['keep_forever'])) {
         'started_at'   => time(),
     ], true);
 
-ptsb_start_backup($partsCsv, $qpref, $qdays);
+ptsb_start_backup($partsCsv, $qpref, $qdays, ['origin' => 'routine']);
 
         
         // marca as rotinas afetadas como executadas hoje no slot
@@ -598,7 +598,7 @@ update_option('ptsb_last_run_intent', [
     'started_at'   => time(),
 ], true);
 
-             ptsb_start_backup($partsCsv, $slot['prefix'] ?? null, $slot['keep_days'] ?? null);
+             ptsb_start_backup($partsCsv, $slot['prefix'] ?? null, $slot['keep_days'] ?? null, ['origin' => 'routine']);
             foreach ($slot['cycle_ids'] as $cid){
                 $cst = $state['by_cycle'][$cid] ?? ['last_by_slot'=>[],'queued_slot'=>'','queued_at'=>0];
                 $cst['last_by_slot'][$slot['time']] = $today;
