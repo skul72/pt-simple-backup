@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.1.0] - 2025-11-04
+- Enfileira backups em múltiplos jobs segmentando por partes e meses de uploads para reduzir picos de uso.
+- Normaliza e reutiliza partes solicitadas para manter histórico consistente entre execuções chunkadas.
+
 ## [1.0.4] - 2025-11-03
 - Cria manifest incremental em disco para a lista de backups, reutilizando a varredura do Drive por até 6 horas.
 - Invalida automaticamente o manifest local ao iniciar novos backups para garantir atualização pontual.

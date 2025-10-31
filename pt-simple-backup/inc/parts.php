@@ -187,28 +187,12 @@ function ptsb_retention_calc(string $iso, int $keepDays): array {
 }
 
 function ptsb_start_backup_with_parts(string $partsCsv): void {
-    $cfg = ptsb_cfg();
-    $set = ptsb_settings();
     if (!ptsb_can_shell()) return;
     if (!ptsb_lock_acquire('parts_trigger')) {
         return;
     }
 
-    if (function_exists('ptsb_remote_manifest_invalidate')) {
-        ptsb_remote_manifest_invalidate();
-    }
-
-    $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-         . 'REMOTE='     . escapeshellarg($cfg['remote'])     . ' '
-         . 'WP_PATH='    . escapeshellarg(ABSPATH)            . ' '
-         . 'PREFIX='     . escapeshellarg($cfg['prefix'])     . ' '
-         . 'KEEP_DAYS='  . escapeshellarg($set['keep_days'])  . ' '
-         . 'KEEP='       . escapeshellarg($set['keep_days']) . ' '
-         . 'PARTS='      . escapeshellarg($partsCsv);
-
-    $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
-         . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
-    shell_exec($cmd);
+    ptsb_start_backup($partsCsv);
 }
 
 function ptsb_guess_cycle_mode_from_filename(string $file): ?string {
