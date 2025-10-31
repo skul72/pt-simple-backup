@@ -8,6 +8,43 @@ function ptsb_can_shell() {
     return function_exists('shell_exec') && !in_array('shell_exec', $disabled, true);
 }
 
+function ptsb_rclone_tuning(): array {
+    static $cache = null;
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $defaults = [
+        'max_age'          => '36h',
+        'update'           => true,
+        'transfers'        => 4,
+        'checkers'         => 6,
+        'retries'          => 5,
+        'retries_sleep'    => '10s',
+        'retries_max_sleep'=> '2m',
+        'fast_list'        => false,
+    ];
+
+    $tuning = apply_filters('ptsb_rclone_tuning', $defaults);
+    if (!is_array($tuning)) {
+        $tuning = [];
+    }
+
+    $cache = array_merge($defaults, $tuning);
+    $cache['fast_list'] = !empty($cache['fast_list']);
+
+    return $cache;
+}
+
+function ptsb_rclone_use_fast_list(): bool {
+    $tuning = ptsb_rclone_tuning();
+    return !empty($tuning['fast_list']);
+}
+
+function ptsb_rclone_fast_list_suffix(): string {
+    return ptsb_rclone_use_fast_list() ? ' --fast-list' : '';
+}
+
 function ptsb_is_readable($p){ return @is_file($p) && @is_readable($p); }
 
 function ptsb_remote_manifest_ttl(): int {
@@ -185,7 +222,8 @@ function ptsb_list_remote_files(bool $forceRefresh = false) {
     $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . ' rclone lsf ' . escapeshellarg($cfg['remote'])
          . ' --files-only --format "tsp" --separator ";" --time-format RFC3339 '
-         . ' --include ' . escapeshellarg('*.tar.gz') . ' --fast-list';
+         . ' --include ' . escapeshellarg('*.tar.gz')
+         . ptsb_rclone_fast_list_suffix();
     $out = shell_exec($cmd);
     $rows = [];
     foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $ln) {
@@ -214,7 +252,8 @@ function ptsb_keep_map() {
     $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . ' rclone lsf ' . escapeshellarg($cfg['remote'])
          . ' --files-only --format "p" --separator ";" '
-         . ' --include ' . escapeshellarg('*.tar.gz.keep') . ' --fast-list';
+         . ' --include ' . escapeshellarg('*.tar.gz.keep')
+         . ptsb_rclone_fast_list_suffix();
     $out = shell_exec($cmd);
     $map = [];
     foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $p) {

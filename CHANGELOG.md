@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.1] - 2025-11-06
+- Define parâmetros padrão de delta para o rclone (max-age/update) nos chunks de uploads e exporta tuning via `RCLONE_TUNING`.
+- Limita concorrência e políticas de retry do rclone no plano, permitindo ajuste fino sem alterar o script externo.
+- Torna o uso de `--fast-list` opcional conforme suporte/memória do remote.
+
 ## [1.2.0] - 2025-11-05
 - Planeja chunks de backup antes de disparar o script externo, organizando partes em jobs sequenciais sem multiplicar entradas no painel.
 - Gera manifestos de chunk em JSON acessíveis pelo script (`PTS_CHUNK_PLAN_*`) e higieniza arquivos antigos automaticamente.
