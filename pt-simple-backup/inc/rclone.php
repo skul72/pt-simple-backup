@@ -10,6 +10,114 @@ function ptsb_can_shell() {
 
 function ptsb_is_readable($p){ return @is_file($p) && @is_readable($p); }
 
+function ptsb_remote_manifest_ttl(): int {
+    $def = 6 * HOUR_IN_SECONDS; // janela padrão de 6h
+    $ttl = (int) apply_filters('ptsb_remote_manifest_ttl', $def);
+    return max(300, $ttl); // pelo menos 5 minutos
+}
+
+function ptsb_remote_manifest_meta_get(): array {
+    $meta = get_option('ptsb_remote_manifest_meta', []);
+    return is_array($meta) ? $meta : [];
+}
+
+function ptsb_remote_manifest_path(bool $ensureDir = false): ?string {
+    if (!function_exists('wp_upload_dir')) {
+        return null;
+    }
+
+    $upload = wp_upload_dir();
+    if (!empty($upload['error'])) {
+        return null;
+    }
+
+    $dir = rtrim((string) $upload['basedir'], "/\\");
+    if ($dir === '') {
+        return null;
+    }
+
+    $dir .= '/pt-simple-backup';
+
+    if ($ensureDir && !is_dir($dir)) {
+        if (function_exists('wp_mkdir_p')) {
+            wp_mkdir_p($dir);
+        } else {
+            @mkdir($dir, 0755, true);
+        }
+    }
+
+    if (!is_dir($dir)) {
+        return null;
+    }
+
+    return $dir . '/remote-list.json';
+}
+
+function ptsb_remote_manifest_read(bool $respectTtl = true): ?array {
+    $meta = ptsb_remote_manifest_meta_get();
+    if (!$meta) {
+        return null;
+    }
+
+    if ($respectTtl) {
+        $ts = (int) ($meta['generated_at'] ?? 0);
+        if ($ts <= 0 || (time() - $ts) > ptsb_remote_manifest_ttl()) {
+            return null;
+        }
+    }
+
+    $path = ptsb_remote_manifest_path(false);
+    if ($path === null || !@file_exists($path)) {
+        return null;
+    }
+
+    $json = @file_get_contents($path);
+    if ($json === false || $json === '') {
+        return null;
+    }
+
+    $data = json_decode($json, true);
+    if (!is_array($data)) {
+        return null;
+    }
+
+    if (!empty($meta['hash']) && md5($json) !== (string) $meta['hash']) {
+        return null;
+    }
+
+    return $data;
+}
+
+function ptsb_remote_manifest_save(array $rows): void {
+    $path = ptsb_remote_manifest_path(true);
+    if ($path === null) {
+        return;
+    }
+
+    $payload = json_encode(array_values($rows), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($payload === false) {
+        return;
+    }
+
+    @file_put_contents($path, $payload, LOCK_EX);
+
+    $meta = [
+        'generated_at' => time(),
+        'hash'         => md5($payload),
+    ];
+
+    update_option('ptsb_remote_manifest_meta', $meta, false);
+}
+
+function ptsb_remote_manifest_invalidate(): void {
+    $path = ptsb_remote_manifest_path(false);
+    if ($path !== null && @file_exists($path)) {
+        @unlink($path);
+    }
+    delete_option('ptsb_remote_manifest_meta');
+    delete_transient('ptsb_totals_v1');
+}
+
 function ptsb_drive_info() {
     $cfg  = ptsb_cfg();
     $info = ['email'=>'', 'used'=>null, 'total'=>null];
@@ -54,7 +162,7 @@ function ptsb_backups_totals_cached(): array {
     if (is_array($cached) && isset($cached['count'], $cached['bytes'])) {
         return $cached;
     }
-    $rows = ptsb_list_remote_files(); // 1 chamada rclone lsf
+    $rows = ptsb_list_remote_files(); // usa manifest local (invalida quando necessário)
     $count = count($rows);
     $bytes = 0;
     foreach ($rows as $r) { $bytes += (int)($r['size'] ?? 0); }
@@ -63,9 +171,17 @@ function ptsb_backups_totals_cached(): array {
     return $out;
 }
 
-function ptsb_list_remote_files() {
+function ptsb_list_remote_files(bool $forceRefresh = false) {
     $cfg = ptsb_cfg();
     if (!ptsb_can_shell()) { return []; }
+
+    if (!$forceRefresh) {
+        $cached = ptsb_remote_manifest_read(true);
+        if (is_array($cached)) {
+            return $cached;
+        }
+    }
+
     $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . ' rclone lsf ' . escapeshellarg($cfg['remote'])
          . ' --files-only --format "tsp" --separator ";" --time-format RFC3339 '
@@ -77,6 +193,18 @@ function ptsb_list_remote_files() {
         if (count($parts) === 3) $rows[] = ['time'=>$parts[0], 'size'=>$parts[1], 'file'=>$parts[2]];
     }
     usort($rows, fn($a,$b) => strcmp($b['time'], $a['time']));
+
+    if ($rows) {
+        ptsb_remote_manifest_save($rows);
+        return $rows;
+    }
+
+    // fallback: se falhar mas existir manifest expirado, reutiliza
+    $fallback = ptsb_remote_manifest_read(false);
+    if (is_array($fallback)) {
+        return $fallback;
+    }
+
     return $rows;
 }
 

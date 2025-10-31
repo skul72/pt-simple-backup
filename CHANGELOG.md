@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.4] - 2025-11-03
+- Cria manifest incremental em disco para a lista de backups, reutilizando a varredura do Drive por até 6 horas.
+- Invalida automaticamente o manifest local ao iniciar novos backups para garantir atualização pontual.
+
 ## [1.0.3] - 2025-11-02
 - Implementa lock otimista com TTL para evitar disparos concorrentes de backups.
 - Atualiza verificações de status liberando o lock assim que o processo encerra.

@@ -13,6 +13,9 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     }
 
     ptsb_log_rotate_if_needed();
+    if (function_exists('ptsb_remote_manifest_invalidate')) {
+        ptsb_remote_manifest_invalidate();
+    }
 
     // 1) tenta última seleção (letras D,P,T,W,S,M,O)
     if ($partsCsv === null) {
