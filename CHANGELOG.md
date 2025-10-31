@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.2] - 2025-11-07
+- Agenda dumps do banco em job assíncrono com `mysqldump --single-transaction --quick`, compressão via `pigz`/`gzip` e upload por `rclone`.
+- Adiciona botão no painel para disparar o dump SQL sem bloquear a requisição administrativa.
+- Permite configurar diretório remoto dedicado (`db-dumps`) para armazenar os arquivos `.sql.gz` gerados.
+
 ## [1.2.1] - 2025-11-06
 - Define parâmetros padrão de delta para o rclone (max-age/update) nos chunks de uploads e exporta tuning via `RCLONE_TUNING`.
 - Limita concorrência e políticas de retry do rclone no plano, permitindo ajuste fino sem alterar o script externo.

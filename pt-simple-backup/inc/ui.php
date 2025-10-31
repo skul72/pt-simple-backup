@@ -253,6 +253,35 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
           <div id="ptsb-progress-text" style="position:absolute;left:8px;top:0;height:100%;line-height:22px;color:#fff;opacity:.9;font-size:12px;">Iniciando…</div>
         </div>
 
+        <?php
+          $dumpRemoteDir = ptsb_db_dump_remote_dir($cfg);
+          $dumpTarget = $cfg['remote'];
+          if ($dumpRemoteDir !== '') {
+              $dumpPrefix = $cfg['remote'];
+              $lastChar = substr($dumpPrefix, -1);
+              if ($lastChar !== ':' && $lastChar !== '/') {
+                  $dumpPrefix .= '/';
+              }
+              $dumpTarget = $dumpPrefix . $dumpRemoteDir;
+          }
+        ?>
+        <h3 style="margin-top:28px;">Dump do Banco (SQL)</h3>
+        <p class="description">
+          Gera um arquivo <code>.sql.gz</code> com <code>mysqldump --single-transaction --quick</code> em segundo plano e envia para <strong><?php echo esc_html($dumpTarget); ?></strong>.
+        </p>
+        <form method="post" action="<?php echo esc_url( admin_url('admin-post.php') ); ?>" style="margin:12px 0;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+          <?php wp_nonce_field('ptsb_nonce'); ?>
+          <input type="hidden" name="action" value="ptsb_do"/>
+          <input type="hidden" name="ptsb_action" value="db_dump"/>
+          <label>Apelido (opcional)
+            <input type="text" name="db_nick" placeholder="Ex.: relatorio" style="min-width:220px">
+          </label>
+          <button class="button" <?php disabled(!ptsb_can_shell()); ?>>Gerar dump SQL</button>
+          <?php if (!ptsb_can_shell()): ?>
+            <span class="description">Requer <code>shell_exec</code> habilitado.</span>
+          <?php endif; ?>
+        </form>
+
         <!-- Arquivos no Drive -->
        <!-- Arquivos no Drive -->
 <h2 style="margin-top:24px !important">Arquivos no Google Drive  <a class="button button-small" style="margin-left:8px"

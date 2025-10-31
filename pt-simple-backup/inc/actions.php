@@ -167,6 +167,107 @@ function ptsb_backup_plan_write(array $plan): ?array {
     ];
 }
 
+function ptsb_db_dump_slug(string $name): string {
+    $slug = preg_replace('/[^A-Za-z0-9._-]+/', '-', $name);
+    return trim((string) $slug, '.-_');
+}
+
+function ptsb_db_dump_local_dir(array $cfg): ?string {
+    $dir = isset($cfg['download_dir']) ? (string) $cfg['download_dir'] : '';
+    if ($dir === '') {
+        return null;
+    }
+
+    if (!@is_dir($dir)) {
+        if (function_exists('wp_mkdir_p')) {
+            if (!wp_mkdir_p($dir)) {
+                return null;
+            }
+        } elseif (!@mkdir($dir, 0755, true)) {
+            return null;
+        }
+    }
+
+    return $dir;
+}
+
+function ptsb_db_dump_remote_dir(array $cfg): string {
+    $dir = isset($cfg['db_dump_remote_dir']) ? (string) $cfg['db_dump_remote_dir'] : '';
+    $dir = trim($dir);
+    if ($dir === '') {
+        return '';
+    }
+
+    return rtrim($dir, '/') . '/';
+}
+
+function ptsb_db_dump_parse_host(string $host): array {
+    $host = trim($host);
+    $out = [
+        'host'   => $host,
+        'port'   => null,
+        'socket' => null,
+    ];
+
+    if ($host === '') {
+        $out['host'] = 'localhost';
+        return $out;
+    }
+
+    if ($host[0] === '[' && strpos($host, ']') !== false) {
+        $end = strpos($host, ']');
+        $out['host'] = substr($host, 1, $end - 1);
+        $rest = substr($host, $end + 1);
+        if (strpos($rest, ':') === 0) {
+            $maybe = substr($rest, 1);
+            if ($maybe !== '' && ctype_digit($maybe)) {
+                $out['port'] = (int) $maybe;
+            }
+        }
+        return $out;
+    }
+
+    $parts = explode(':', $host, 2);
+    if (count($parts) < 2) {
+        $out['host'] = $host;
+        return $out;
+    }
+
+    $out['host'] = $parts[0] === '' ? 'localhost' : $parts[0];
+    $rest = $parts[1];
+    if ($rest === '') {
+        return $out;
+    }
+
+    if (ctype_digit($rest)) {
+        $out['port'] = (int) $rest;
+        return $out;
+    }
+
+    if (strpos($rest, '/') !== false) {
+        $out['socket'] = $rest;
+        return $out;
+    }
+
+    $out['port'] = ctype_digit($rest) ? (int) $rest : null;
+    return $out;
+}
+
+function ptsb_db_dump_detect_compressor(string $envBase): ?array {
+    foreach (['pigz', 'gzip'] as $bin) {
+        $path = trim((string) shell_exec($envBase . ' command -v ' . $bin . ' 2>/dev/null'));
+        if ($path !== '') {
+            return [
+                'bin'   => $path,
+                'name'  => $bin,
+                'flags' => '-c',
+            ];
+        }
+    }
+
+    return null;
+}
+
 function ptsb_backup_plan_rclone_payload(array $tuning): array {
     $payload = [];
 
@@ -591,6 +692,124 @@ function ptsb_process_admin_job(array $job): bool {
     $envBase = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 ';
 
     switch ($task) {
+        case 'db_dump':
+            if (!defined('DB_NAME') || DB_NAME === '') {
+                ptsb_log('ptsb: job db_dump abortado — constante DB_NAME ausente.');
+                return false;
+            }
+
+            $cfg       = ptsb_cfg();
+            $remote    = $cfg['remote'];
+            $prefix    = (string) ($cfg['prefix'] ?? '');
+            $nickname  = isset($payload['nickname']) ? ptsb_db_dump_slug((string) $payload['nickname']) : '';
+            $ts        = gmdate('Ymd-His');
+            $localDir  = ptsb_db_dump_local_dir($cfg);
+            if ($localDir === null) {
+                $localDir = sys_get_temp_dir();
+                ptsb_log('ptsb: utilizando diretório temporário para dump do banco: ' . $localDir);
+            }
+            $localDir = rtrim($localDir, DIRECTORY_SEPARATOR);
+
+            $base = $prefix . 'db-' . ($nickname !== '' ? $nickname . '-' : '') . $ts;
+            $sqlPath = $localDir . DIRECTORY_SEPARATOR . $base . '.sql';
+            $gzPath  = $sqlPath . '.gz';
+
+            $envBase = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 ';
+
+            $dbUser = defined('DB_USER') ? DB_USER : '';
+            $dbPass = defined('DB_PASSWORD') ? DB_PASSWORD : '';
+            $dbHost = defined('DB_HOST') ? DB_HOST : 'localhost';
+            $parsed = ptsb_db_dump_parse_host($dbHost);
+
+            $hostArg   = ' --host=' . escapeshellarg($parsed['host']);
+            $portArg   = $parsed['port'] !== null ? ' --port=' . escapeshellarg((string) $parsed['port']) : '';
+            $socketArg = $parsed['socket'] !== null ? ' --socket=' . escapeshellarg($parsed['socket']) : '';
+
+            $dumpCmd = $envBase
+                     . 'MYSQL_PWD=' . escapeshellarg($dbPass)
+                     . ' mysqldump'
+                     . ' --single-transaction --quick --skip-lock-tables --default-character-set=utf8mb4'
+                     . $hostArg . $portArg . $socketArg
+                     . ' --user=' . escapeshellarg($dbUser)
+                     . ' ' . escapeshellarg(DB_NAME)
+                     . ' > ' . escapeshellarg($sqlPath) . ' 2>&1';
+
+            $dumpOut = shell_exec($dumpCmd);
+            if (!@file_exists($sqlPath) || (int) @filesize($sqlPath) === 0) {
+                $dumpLog = trim((string) $dumpOut);
+                if ($dumpLog !== '') {
+                    ptsb_log('ptsb: falha ao executar mysqldump: ' . $dumpLog);
+                } else {
+                    ptsb_log('ptsb: falha ao executar mysqldump (arquivo vazio).');
+                }
+                @unlink($sqlPath);
+                return false;
+            }
+
+            $compressor = ptsb_db_dump_detect_compressor($envBase);
+            if ($compressor === null) {
+                ptsb_log('ptsb: compressor não encontrado (pigz/gzip).');
+                @unlink($sqlPath);
+                return false;
+            }
+
+            $compressCmd = $envBase
+                         . escapeshellarg($compressor['bin'])
+                         . ' ' . $compressor['flags']
+                         . ' ' . escapeshellarg($sqlPath)
+                         . ' > ' . escapeshellarg($gzPath) . ' 2>&1';
+
+            $compressOut = shell_exec($compressCmd);
+            if (!@file_exists($gzPath) || (int) @filesize($gzPath) === 0) {
+                $compLog = trim((string) $compressOut);
+                if ($compLog !== '') {
+                    ptsb_log('ptsb: falha ao comprimir dump do banco: ' . $compLog);
+                } else {
+                    ptsb_log('ptsb: falha ao comprimir dump do banco (arquivo vazio).');
+                }
+                @unlink($sqlPath);
+                @unlink($gzPath);
+                return false;
+            }
+
+            @unlink($sqlPath);
+
+            $remoteDir = ptsb_db_dump_remote_dir($cfg);
+            $remotePath = $remote . $remoteDir;
+            if ($remoteDir !== '') {
+                shell_exec($envBase . ' rclone mkdir ' . escapeshellarg($remotePath));
+            }
+
+            $remoteFile = basename($gzPath);
+            $target = $remotePath . $remoteFile;
+
+            $uploadCmd = $envBase
+                       . ' rclone copyto '
+                       . escapeshellarg($gzPath)
+                       . ' '
+                       . escapeshellarg($target);
+            $uploadOut = shell_exec($uploadCmd);
+
+            $checkCmd = $envBase
+                      . ' rclone lsf '
+                      . escapeshellarg($remotePath)
+                      . ' --files-only --format "p" --include '
+                      . escapeshellarg($remoteFile)
+                      . ptsb_rclone_fast_list_suffix();
+            $check = shell_exec($checkCmd);
+            if (trim((string) $check) === '') {
+                $upLog = trim((string) $uploadOut);
+                if ($upLog !== '') {
+                    ptsb_log('ptsb: falha ao enviar dump do banco: ' . $upLog);
+                } else {
+                    ptsb_log('ptsb: dump do banco não encontrado no remote após upload.');
+                }
+                return false;
+            }
+
+            ptsb_log('Dump do banco gerado e enviado: ' . $remoteFile . ' (compressor: ' . $compressor['name'] . ')');
+            return true;
+
         case 'rename':
             $old = isset($payload['old']) ? (string)$payload['old'] : '';
             $new = isset($payload['new']) ? (string)$payload['new'] : '';
@@ -900,11 +1119,11 @@ add_action('admin_post_ptsb_do', function () {
 
 
    /* ===== Disparar manual (topo) — lendo as letras D,P,T,W,S,M,O ===== */
-if ($act === 'backup_now') {
-    if (!ptsb_can_shell()) { add_settings_error('ptsb', 'noshell', 'shell_exec desabilitado no PHP.', 'error'); ptsb_back(); }
-    if (ptsb_lock_is_locked()) {
-        add_settings_error('ptsb', 'bk_running', 'J&aacute; existe um backup em execu&ccedil;&atilde;o. Aguarde concluir antes de iniciar outro.', 'error');
-        ptsb_back();
+    if ($act === 'backup_now') {
+        if (!ptsb_can_shell()) { add_settings_error('ptsb', 'noshell', 'shell_exec desabilitado no PHP.', 'error'); ptsb_back(); }
+        if (ptsb_lock_is_locked()) {
+            add_settings_error('ptsb', 'bk_running', 'J&aacute; existe um backup em execu&ccedil;&atilde;o. Aguarde concluir antes de iniciar outro.', 'error');
+            ptsb_back();
     }
 
     // 1) Preferir as letras vindas dos chips (parts_sel[]). Se não vier, aceitar parts_ui[] (legado).
@@ -985,6 +1204,31 @@ update_option('ptsb_last_run_intent', [
     add_settings_error('ptsb', 'bk_started', $txt, 'updated');
     ptsb_back();
 }
+
+
+    /* ===== Dump de banco (SQL) ===== */
+    if ($act === 'db_dump') {
+        if (!ptsb_can_shell()) {
+            add_settings_error('ptsb', 'noshell', 'shell_exec desabilitado no PHP.', 'error');
+            ptsb_back();
+        }
+
+        $rawNick = isset($_POST['db_nick']) ? sanitize_text_field((string) $_POST['db_nick']) : '';
+        $nick = $rawNick !== '' ? ptsb_db_dump_slug($rawNick) : '';
+
+        $jobId = ptsb_enqueue_admin_task('db_dump', [
+            'nickname'     => $nick,
+            'requested_by' => get_current_user_id(),
+        ]);
+
+        if (!$jobId) {
+            add_settings_error('ptsb', 'dbdump_fail', 'Falha ao agendar o dump do banco. Tente novamente.', 'error');
+        } else {
+            add_settings_error('ptsb', 'dbdump_ok', 'Dump do banco agendado. A execução ocorrerá em segundo plano.', 'updated');
+        }
+
+        ptsb_back();
+    }
 
 
     /* ===== Salvar TUDO (retenção + agenda/mode) ===== */
