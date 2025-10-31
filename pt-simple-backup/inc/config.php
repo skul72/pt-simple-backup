@@ -14,7 +14,25 @@ function ptsb_cfg() {
         'download_dir'   => '/home/plugintema.com/Backups/downloads',
         'drive_url'      => 'https://drive.google.com/drive/u/0/folders/18wIaInN0d0ftKhsi1BndrKmkVuOQkFoO',
 
-             'keep_days_def'  => 12,
+        'keep_days_def'  => 12,
+        'rclone'         => [
+            'fast_list'               => false,
+            'transfers'               => 2,
+            'checkers'                => 4,
+            'retries'                 => 5,
+            'retries_sleep'           => '20s,2m',
+            'low_level_retries'       => 15,
+            'low_level_retries_sleep' => '10s',
+            'delta'                   => [
+                'enable'               => true,
+                'update'               => true,
+                'uploads_month_max_age' => '65d',
+                'uploads_year_max_age'  => '400d',
+                'uploads_all_max_age'   => null,
+                'default_max_age'       => null,
+            ],
+            'extra'                   => [],
+        ],
 
         // agendamento
         'tz_string'      => 'America/Sao_Paulo',
@@ -25,8 +43,8 @@ function ptsb_cfg() {
         'miss_window'    => 15,
         'queue_timeout'  => 5400,              // 90min
         'lock_ttl'       => 5400,              // TTL do lock otimista (s)
-        'log_max_mb' => 3, // tamanho máx. do log
-'log_keep'   => 5, // quantos arquivos rotacionados manter
+        'log_max_mb'     => 3,                 // tamanho máx. do log
+        'log_keep'       => 5,                 // quantos arquivos rotacionados manter
 
     ];
     /**

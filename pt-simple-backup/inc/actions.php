@@ -87,6 +87,25 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
          . 'KEEP_FOREVER='     . escapeshellarg($keepDays === 0 ? 1 : 0) . ' ' // opcional p/ scripts que queiram esse flag
          . 'PARTS='            . escapeshellarg($normalizedParts);
 
+    $rcloneFlags = trim(ptsb_rclone_env_flags());
+    if ($rcloneFlags !== '') {
+        $env .= ' RCLONE_FLAGS=' . escapeshellarg($rcloneFlags);
+    }
+
+    $rcloneOpts = ptsb_rclone_options();
+    $env       .= ' RCLONE_FAST_LIST=' . escapeshellarg($rcloneOpts['fast_list'] ? '1' : '0');
+    if (!empty($rcloneOpts['transfers'])) {
+        $env .= ' RCLONE_TRANSFERS=' . escapeshellarg((string) $rcloneOpts['transfers']);
+    }
+    if (!empty($rcloneOpts['checkers'])) {
+        $env .= ' RCLONE_CHECKERS=' . escapeshellarg((string) $rcloneOpts['checkers']);
+    }
+
+    $deltaPlan = ptsb_backup_delta_plan_json($normalizedParts);
+    if ($deltaPlan !== '') {
+        $env .= ' DELTA_PLAN=' . escapeshellarg($deltaPlan);
+    }
+
     $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
 
@@ -159,6 +178,96 @@ function ptsb_backup_chunk_plan(string $normalizedParts): array {
 
     $chunks = array_values(array_unique(array_filter(array_map('trim', $chunks))));
     return apply_filters('ptsb_backup_chunks', $chunks, $normalizedParts);
+}
+
+function ptsb_backup_delta_plan(string $normalizedParts): array {
+    $normalizedParts = ptsb_backup_normalize_parts_csv($normalizedParts);
+    if ($normalizedParts === '') {
+        return [];
+    }
+
+    $opts  = ptsb_rclone_options();
+    $delta = isset($opts['delta']) && is_array($opts['delta']) ? $opts['delta'] : [];
+
+    $defaults = [
+        'enable'                => true,
+        'update'                => true,
+        'uploads_month_max_age' => '65d',
+        'uploads_year_max_age'  => '400d',
+        'uploads_all_max_age'   => null,
+        'default_max_age'       => null,
+    ];
+    $delta = array_merge($defaults, $delta);
+
+    if (!$delta['enable']) {
+        return [];
+    }
+
+    $parts = array_filter(array_map('trim', explode(',', strtolower($normalizedParts))));
+    $plan  = [];
+
+    foreach ($parts as $part) {
+        $entry = [];
+
+        if (!empty($delta['update'])) {
+            $entry['update'] = true;
+        }
+
+        if ($part === 'uploads') {
+            $entry['include'] = ['wp-content/uploads/**'];
+            if (!empty($delta['uploads_all_max_age'])) {
+                $entry['max_age'] = (string) $delta['uploads_all_max_age'];
+            }
+        } elseif (strpos($part, 'uploads:') === 0) {
+            $suffix = substr($part, strlen('uploads:'));
+            if (preg_match('/^[0-9]{4}-[0-9]{2}$/', $suffix)) {
+                [$year, $month] = explode('-', $suffix, 2);
+                $entry['include'] = ['wp-content/uploads/' . $year . '/' . $month . '/**'];
+                if (!empty($delta['uploads_month_max_age'])) {
+                    $entry['max_age'] = (string) $delta['uploads_month_max_age'];
+                }
+            } elseif (preg_match('/^[0-9]{4}$/', $suffix)) {
+                $entry['include'] = ['wp-content/uploads/' . $suffix . '/**'];
+                if (!empty($delta['uploads_year_max_age'])) {
+                    $entry['max_age'] = (string) $delta['uploads_year_max_age'];
+                }
+            } else {
+                $entry['include'] = ['wp-content/uploads/**'];
+                if (!empty($delta['uploads_all_max_age'])) {
+                    $entry['max_age'] = (string) $delta['uploads_all_max_age'];
+                }
+            }
+        } elseif (!empty($delta['default_max_age'])) {
+            $entry['max_age'] = (string) $delta['default_max_age'];
+        }
+
+        $entry = array_filter($entry, static function ($value) {
+            if (is_array($value)) {
+                return !empty($value);
+            }
+            return $value !== null && $value !== false && $value !== '';
+        });
+
+        if ($entry) {
+            $plan[$part] = $entry;
+        }
+    }
+
+    return apply_filters('ptsb_backup_delta_plan', $plan, $normalizedParts, $delta);
+}
+
+function ptsb_backup_delta_plan_json(string $normalizedParts): string {
+    $plan = ptsb_backup_delta_plan($normalizedParts);
+    if (!$plan) {
+        return '[]';
+    }
+
+    $json = json_encode($plan, JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        return '[]';
+    }
+
+    return $json;
 }
 
 function ptsb_backup_upload_chunks(): array {
@@ -378,7 +487,7 @@ function ptsb_process_admin_job(array $job): bool {
                 . escapeshellarg($remote)
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($new)
-                . ' --fast-list'
+                . ptsb_rclone_flags_string(['fast_list' => true])
             );
             if (trim((string)$exists) !== '') {
                 ptsb_log('ptsb: job rename abortado, destino já existe: '.$new);
@@ -390,7 +499,8 @@ function ptsb_process_admin_job(array $job): bool {
                    . escapeshellarg($remote.$old)
                    . ' '
                    . escapeshellarg($remote.$new)
-                   . ' --fast-list 2>&1';
+                   . ptsb_rclone_flags_string(['fast_list' => true])
+                   . ' 2>&1';
             $out = shell_exec($mvCmd);
 
             $chkOld = shell_exec(
@@ -399,7 +509,7 @@ function ptsb_process_admin_job(array $job): bool {
                 . escapeshellarg($remote)
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($old)
-                . ' --fast-list'
+                . ptsb_rclone_flags_string(['fast_list' => true])
             );
             $chkNew = shell_exec(
                 $envBase
@@ -407,7 +517,7 @@ function ptsb_process_admin_job(array $job): bool {
                 . escapeshellarg($remote)
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($new)
-                . ' --fast-list'
+                . ptsb_rclone_flags_string(['fast_list' => true])
             );
 
             if (trim((string)$chkOld) !== '' || trim((string)$chkNew) === '') {
@@ -423,7 +533,7 @@ function ptsb_process_admin_job(array $job): bool {
                 . escapeshellarg($remote)
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($oldJson)
-                . ' --fast-list'
+                . ptsb_rclone_flags_string(['fast_list' => true])
             );
             if (trim((string)$hasJson) !== '') {
                 $jsonMove = $envBase
@@ -431,7 +541,7 @@ function ptsb_process_admin_job(array $job): bool {
                           . escapeshellarg($remote.$oldJson)
                           . ' '
                           . escapeshellarg($remote.$newJson)
-                          . ' --fast-list';
+                          . ptsb_rclone_flags_string(['fast_list' => true]);
                 shell_exec($jsonMove);
             }
 
@@ -442,7 +552,7 @@ function ptsb_process_admin_job(array $job): bool {
                 . escapeshellarg($remote)
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($oldKeep)
-                . ' --fast-list'
+                . ptsb_rclone_flags_string(['fast_list' => true])
             );
             if (trim((string)$hasKeep) !== '') {
                 $newKeep = $new.'.keep';
@@ -451,7 +561,7 @@ function ptsb_process_admin_job(array $job): bool {
                           . escapeshellarg($remote.$oldKeep)
                           . ' '
                           . escapeshellarg($remote.$newKeep)
-                          . ' --fast-list';
+                          . ptsb_rclone_flags_string(['fast_list' => true]);
                 shell_exec($keepMove);
             }
 
@@ -471,10 +581,12 @@ function ptsb_process_admin_job(array $job): bool {
                 $touch = $envBase
                        . ' rclone touch '
                        . escapeshellarg($remote.$file.'.keep')
-                       . ' --no-create-dirs';
+                       . ' --no-create-dirs'
+                       . ptsb_rclone_flags_string();
                 $rcat  = 'printf "" | '.$envBase
                        . ' rclone rcat '
-                       . escapeshellarg($remote.$file.'.keep');
+                       . escapeshellarg($remote.$file.'.keep')
+                       . ptsb_rclone_flags_string();
                 shell_exec($touch . ' || ' . $rcat);
 
                 $chk = shell_exec(
@@ -483,7 +595,7 @@ function ptsb_process_admin_job(array $job): bool {
                     . escapeshellarg($remote)
                     . ' --files-only --format "p" --include '
                     . escapeshellarg($file.'.keep')
-                    . ' --fast-list'
+                    . ptsb_rclone_flags_string(['fast_list' => true])
                 );
                 if (trim((string)$chk) === '') {
                     ptsb_log('ptsb: falha ao marcar Sempre manter para '.$file);
@@ -497,7 +609,7 @@ function ptsb_process_admin_job(array $job): bool {
             $delKeep = $envBase
                      . ' rclone deletefile '
                      . escapeshellarg($remote.$file.'.keep')
-                     . ' --fast-list';
+                     . ptsb_rclone_flags_string(['fast_list' => true]);
             shell_exec($delKeep);
 
             $chk = shell_exec(
@@ -506,7 +618,7 @@ function ptsb_process_admin_job(array $job): bool {
                 . escapeshellarg($remote)
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($file.'.keep')
-                . ' --fast-list'
+                . ptsb_rclone_flags_string(['fast_list' => true])
             );
             if (trim((string)$chk) !== '') {
                 ptsb_log('ptsb: falha ao remover Sempre manter de '.$file);
@@ -530,7 +642,7 @@ function ptsb_process_admin_job(array $job): bool {
                 . escapeshellarg($remote)
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($file.'.keep')
-                . ' --fast-list'
+                . ptsb_rclone_flags_string(['fast_list' => true])
             );
             if (trim((string)$keep) !== '') {
                 ptsb_log('ptsb: remoção ignorada, arquivo marcado como Sempre manter: '.$file);
@@ -540,14 +652,14 @@ function ptsb_process_admin_job(array $job): bool {
             $delTar = $envBase
                     . ' rclone deletefile '
                     . escapeshellarg($remote.$file)
-                    . ' --fast-list';
+                    . ptsb_rclone_flags_string(['fast_list' => true]);
             shell_exec($delTar);
 
             $jsonPath = ptsb_tar_to_json($file);
             $delJson = $envBase
                      . ' rclone deletefile '
                      . escapeshellarg($remote.$jsonPath)
-                     . ' --fast-list';
+                     . ptsb_rclone_flags_string(['fast_list' => true]);
             shell_exec($delJson);
 
             delete_transient('ptsb_m_' . md5($file));
@@ -558,7 +670,7 @@ function ptsb_process_admin_job(array $job): bool {
                 . escapeshellarg($remote)
                 . ' --files-only --format "p" --include '
                 . escapeshellarg($file)
-                . ' --fast-list'
+                . ptsb_rclone_flags_string(['fast_list' => true])
             );
             if (trim((string)$chk) === '') {
                 ptsb_log('Arquivo removido via job: '.$file);

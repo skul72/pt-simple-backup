@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.1.1] - 2025-11-05
+- Define flags padrão do rclone com limites de `--transfers`/`--checkers`, novos retries e exporta plano delta para os scripts.
+- Adiciona envio de dicas de delta por parte/pasta para reduzir cópias full desnecessárias e aproveitar `--max-age`/`--update`.
+
 ## [1.1.0] - 2025-11-04
 - Enfileira backups em múltiplos jobs segmentando por partes e meses de uploads para reduzir picos de uso.
 - Normaliza e reutiliza partes solicitadas para manter histórico consistente entre execuções chunkadas.

@@ -17,7 +17,13 @@ function ptsb_manifest_read(string $tarFile): array {
 
    $jsonPath = ptsb_tar_to_json($tarFile);
     $env      = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 ';
-    $out      = shell_exec($env.' rclone cat '.escapeshellarg($cfg['remote'].$jsonPath).' 2>/dev/null');
+    $out      = shell_exec(
+        $env
+        . ' rclone cat '
+        . escapeshellarg($cfg['remote'].$jsonPath)
+        . ptsb_rclone_flags_string()
+        . ' 2>/dev/null'
+    );
 
     $data = json_decode((string)$out, true);
     if (!is_array($data)) $data = [];
@@ -47,7 +53,9 @@ function ptsb_manifest_write(string $tarFile, array $add, bool $merge=true): boo
 
     $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . ' cat ' . escapeshellarg($tmp)
-         . ' | rclone rcat ' . escapeshellarg($cfg['remote'] . $jsonPath) . ' 2>/dev/null';
+         . ' | rclone rcat ' . escapeshellarg($cfg['remote'] . $jsonPath)
+         . ptsb_rclone_flags_string()
+         . ' 2>/dev/null';
     shell_exec($cmd);
     @unlink($tmp);
 

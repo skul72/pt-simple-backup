@@ -10,6 +10,96 @@ function ptsb_can_shell() {
 
 function ptsb_is_readable($p){ return @is_file($p) && @is_readable($p); }
 
+function ptsb_rclone_options(): array {
+    $cfg = ptsb_cfg();
+    $opts = isset($cfg['rclone']) && is_array($cfg['rclone']) ? $cfg['rclone'] : [];
+
+    $defaults = [
+        'fast_list'               => false,
+        'transfers'               => 2,
+        'checkers'                => 4,
+        'retries'                 => 5,
+        'retries_sleep'           => '20s,2m',
+        'low_level_retries'       => 15,
+        'low_level_retries_sleep' => '10s',
+        'extra'                   => [],
+        'delta'                   => [],
+    ];
+
+    $opts = array_merge($defaults, $opts);
+
+    $opts['fast_list'] = !empty($opts['fast_list']);
+    $opts['transfers'] = max(0, (int) $opts['transfers']);
+    $opts['checkers']  = max(0, (int) $opts['checkers']);
+    $opts['retries']   = max(0, (int) $opts['retries']);
+    $opts['extra']     = is_array($opts['extra']) ? $opts['extra'] : [];
+    if (!is_array($opts['delta'])) {
+        $opts['delta'] = [];
+    }
+
+    return $opts;
+}
+
+function ptsb_rclone_base_flags_list(array $options = []): array {
+    $opts  = ptsb_rclone_options();
+    $flags = [];
+
+    if ($opts['checkers'] > 0) {
+        $flags[] = '--checkers ' . $opts['checkers'];
+    }
+    if ($opts['transfers'] > 0) {
+        $flags[] = '--transfers ' . $opts['transfers'];
+    }
+    if ($opts['retries'] > 0) {
+        $flags[] = '--retries ' . $opts['retries'];
+    }
+    if (!empty($opts['retries_sleep'])) {
+        $flags[] = '--retries-sleep ' . trim((string) $opts['retries_sleep']);
+    }
+    if (!empty($opts['low_level_retries'])) {
+        $flags[] = '--low-level-retries ' . max(0, (int) $opts['low_level_retries']);
+    }
+    if (!empty($opts['low_level_retries_sleep'])) {
+        $flags[] = '--low-level-retries-sleep ' . trim((string) $opts['low_level_retries_sleep']);
+    }
+
+    if (!empty($options['fast_list']) && $opts['fast_list']) {
+        $flags[] = '--fast-list';
+    }
+
+    if (!empty($opts['extra'])) {
+        foreach ($opts['extra'] as $flag) {
+            $flag = trim((string) $flag);
+            if ($flag !== '') {
+                $flags[] = $flag;
+            }
+        }
+    }
+
+    if (!empty($options['append']) && is_array($options['append'])) {
+        foreach ($options['append'] as $flag) {
+            $flag = trim((string) $flag);
+            if ($flag !== '') {
+                $flags[] = $flag;
+            }
+        }
+    }
+
+    return array_values(array_filter($flags, static function ($flag) {
+        return $flag !== '';
+    }));
+}
+
+function ptsb_rclone_flags_string(array $options = []): string {
+    $flags = ptsb_rclone_base_flags_list($options);
+    return $flags ? ' ' . implode(' ', $flags) : '';
+}
+
+function ptsb_rclone_env_flags(): string {
+    $flags = ptsb_rclone_base_flags_list();
+    return implode(' ', $flags);
+}
+
 function ptsb_remote_manifest_ttl(): int {
     $def = 6 * HOUR_IN_SECONDS; // janela padrão de 6h
     $ttl = (int) apply_filters('ptsb_remote_manifest_ttl', $def);
@@ -185,7 +275,8 @@ function ptsb_list_remote_files(bool $forceRefresh = false) {
     $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . ' rclone lsf ' . escapeshellarg($cfg['remote'])
          . ' --files-only --format "tsp" --separator ";" --time-format RFC3339 '
-         . ' --include ' . escapeshellarg('*.tar.gz') . ' --fast-list';
+         . ' --include ' . escapeshellarg('*.tar.gz')
+         . ptsb_rclone_flags_string(['fast_list' => true]);
     $out = shell_exec($cmd);
     $rows = [];
     foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $ln) {
@@ -214,7 +305,8 @@ function ptsb_keep_map() {
     $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . ' rclone lsf ' . escapeshellarg($cfg['remote'])
          . ' --files-only --format "p" --separator ";" '
-         . ' --include ' . escapeshellarg('*.tar.gz.keep') . ' --fast-list';
+         . ' --include ' . escapeshellarg('*.tar.gz.keep')
+         . ptsb_rclone_flags_string(['fast_list' => true]);
     $out = shell_exec($cmd);
     $map = [];
     foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $p) {
@@ -228,9 +320,11 @@ function ptsb_apply_keep_sidecar($file){
     $cfg = ptsb_cfg();
     if (!ptsb_can_shell() || $file==='') return false;
     $touch = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-           . ' rclone touch ' . escapeshellarg($cfg['remote'].$file.'.keep') . ' --no-create-dirs';
+           . ' rclone touch ' . escapeshellarg($cfg['remote'].$file.'.keep') . ' --no-create-dirs'
+           . ptsb_rclone_flags_string();
     $rcat  = 'printf "" | /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-           . ' rclone rcat ' . escapeshellarg($cfg['remote'].$file.'.keep');
+           . ' rclone rcat ' . escapeshellarg($cfg['remote'].$file.'.keep')
+           . ptsb_rclone_flags_string();
     shell_exec($touch . ' || ' . $rcat);
     return true;
 }
