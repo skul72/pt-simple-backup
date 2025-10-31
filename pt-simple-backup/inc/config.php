@@ -12,6 +12,7 @@ function ptsb_cfg() {
         'script_backup'  => '/home/plugintema.com/Scripts/wp-backup-to-gdrive.sh',
         'script_restore' => '/home/plugintema.com/Scripts/wp-restore-from-archive.sh',
         'download_dir'   => '/home/plugintema.com/Backups/downloads',
+        'db_dump_remote_dir' => 'db-dumps',
         'drive_url'      => 'https://drive.google.com/drive/u/0/folders/18wIaInN0d0ftKhsi1BndrKmkVuOQkFoO',
 
              'keep_days_def'  => 12,
