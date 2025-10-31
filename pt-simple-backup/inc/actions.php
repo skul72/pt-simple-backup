@@ -3,42 +3,16 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-function ptsb_backup_chunk_plan(string $partsCsv): array {
-    $parts = array_values(array_unique(array_filter(array_map('trim', explode(',', strtolower((string) $partsCsv))))));
-    if (!$parts) {
-        return [];
-    }
-
-    $buckets = [];
-    $order   = [];
-    foreach ($parts as $part) {
-        $bucket = in_array($part, ['langs', 'config', 'others'], true) ? 'misc' : $part;
-        if (!isset($buckets[$bucket])) {
-            $buckets[$bucket] = [];
-            $order[] = $bucket;
-        }
-        $buckets[$bucket][$part] = $part;
-    }
-
-    $chunks = [];
-    foreach ($order as $bucket) {
-        $chunks[] = implode(',', array_values($buckets[$bucket]));
-    }
-
-    $chunks = array_values(array_filter(array_unique($chunks)));
-    return apply_filters('ptsb_backup_chunk_plan', $chunks, $partsCsv, $parts);
-}
-
-function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDays = null, array $context = []){
+function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDays = null){
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
     if (!ptsb_can_shell()) return;
 
-    $context       = is_array($context) ? $context : [];
-    $skipChunking  = !empty($context['skip_chunking']);
-    $chunkCtx      = isset($context['chunk']) && is_array($context['chunk']) ? $context['chunk'] : [];
-    $originCtx     = isset($context['origin']) ? (string) $context['origin'] : '';
+    if (!ptsb_lock_acquire('backup_start')) {
+        return;
+    }
 
+    ptsb_log_rotate_if_needed();
     if (function_exists('ptsb_remote_manifest_invalidate')) {
         ptsb_remote_manifest_invalidate();
     }
@@ -47,7 +21,7 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     if ($partsCsv === null) {
         $last = get_option('ptsb_last_parts_ui', implode(',', ptsb_ui_default_codes()));
         $letters = array_values(array_intersect(
-            array_map('strtoupper', array_filter(array_map('trim', explode(',', (string) $last)))) ,
+            array_map('strtoupper', array_filter(array_map('trim', explode(',', (string)$last)))) ,
             ['D','P','T','W','S','M','O']
         ));
         if (!$letters) { $letters = array_map('strtoupper', ptsb_ui_default_codes()); }
@@ -67,55 +41,10 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
 
     // >>> ALTERAÇÃO: permitir 0 (sentinela "sempre manter")
     if ($overrideDays !== null) {
-        $keepDays = max(0, (int) $overrideDays);   // 0 = sempre manter; >0 = dias; null = usa padrão
+        $keepDays = max(0, (int)$overrideDays);   // 0 = sempre manter; >0 = dias; null = usa padrão
     } else {
-        $keepDays = (int) $set['keep_days'];
+        $keepDays = (int)$set['keep_days'];
     }
-
-    $recordParts = isset($chunkCtx['original']) && $chunkCtx['original'] !== ''
-        ? (string) $chunkCtx['original']
-        : (string) $partsCsv;
-    update_option('ptsb_last_run_parts', $recordParts, true);
-
-    if (!$skipChunking) {
-        $chunks = ptsb_backup_chunk_plan($partsCsv);
-        if (count($chunks) > 1) {
-            $batchId        = isset($chunkCtx['batch']) ? (string) $chunkCtx['batch'] : ptsb_uuid4();
-            $totalChunks    = count($chunks);
-            $originForJob   = $originCtx !== '' ? $originCtx : 'manual';
-            $keepForeverFlg = $keepDays === 0;
-
-            foreach ($chunks as $idx => $chunkCsv) {
-                $chunkParts = array_values(array_filter(array_map('trim', explode(',', $chunkCsv))));
-                $job = [
-                    'parts_csv'    => $chunkCsv,
-                    'prefix'       => $overridePrefix,
-                    'keep_days'    => $keepDays,
-                    'keep_forever' => $keepForeverFlg ? 1 : 0,
-                    'origin'       => $originForJob,
-                    'chunk'        => [
-                        'batch'    => $batchId,
-                        'index'    => $idx + 1,
-                        'total'    => $totalChunks,
-                        'original' => $partsCsv,
-                        'parts'    => $chunkParts,
-                    ],
-                ];
-                ptsb_enqueue_backup_job($job, $idx === 0 ? 1 : min(60, 10 * ($idx + 1)));
-            }
-            return;
-        }
-
-        if (!empty($chunks)) {
-            $partsCsv = $chunks[0];
-        }
-    }
-
-    if (!ptsb_lock_acquire('backup_start')) {
-        return;
-    }
-
-    ptsb_log_rotate_if_needed();
 
     $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . 'REMOTE='           . escapeshellarg($cfg['remote'])     . ' '
@@ -125,27 +54,11 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
          . 'KEEP='             . escapeshellarg($keepDays)          . ' '
          . 'RETENTION_DAYS='   . escapeshellarg($keepDays)          . ' '
          . 'RETENTION='        . escapeshellarg($keepDays)          . ' '
-         . 'KEEP_FOREVER='     . escapeshellarg($keepDays === 0 ? 1 : 0) . ' '
+         . 'KEEP_FOREVER='     . escapeshellarg($keepDays === 0 ? 1 : 0) . ' ' // opcional p/ scripts que queiram esse flag
          . 'PARTS='            . escapeshellarg($partsCsv);
 
-    if ($originCtx !== '') {
-        $env .= ' ORIGIN=' . escapeshellarg($originCtx);
-    }
-    if (!empty($chunkCtx['batch'])) {
-        $env .= ' CHUNK_BATCH=' . escapeshellarg((string) $chunkCtx['batch']);
-    }
-    if (!empty($chunkCtx['index'])) {
-        $env .= ' CHUNK_INDEX=' . escapeshellarg((string) ((int) $chunkCtx['index']));
-    }
-    if (!empty($chunkCtx['total'])) {
-        $env .= ' CHUNK_TOTAL=' . escapeshellarg((string) ((int) $chunkCtx['total']));
-    }
-    if (!empty($chunkCtx['original'])) {
-        $env .= ' CHUNK_ORIGINAL=' . escapeshellarg((string) $chunkCtx['original']);
-    }
-    if (!empty($chunkCtx['parts'])) {
-        $env .= ' CHUNK_PARTS=' . escapeshellarg(implode(',', array_values(array_unique(array_map('strtolower', (array) $chunkCtx['parts'])))));
-    }
+    // guarda as partes usadas neste disparo (fallback para a notificação)
+    update_option('ptsb_last_run_parts', (string)$partsCsv, true);
 
     $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
@@ -293,14 +206,7 @@ add_action('ptsb_run_backup_job', function($jobId){
         'started_at'   => time(),
     ], true);
 
-    $chunkCtx = isset($job['chunk']) && is_array($job['chunk']) ? $job['chunk'] : [];
-    $skipChunk = !empty($chunkCtx);
-
-    ptsb_start_backup($partsCsv, $prefix, $keepDays, [
-        'skip_chunking' => $skipChunk,
-        'chunk'         => $chunkCtx,
-        'origin'        => $origin,
-    ]);
+    ptsb_start_backup($partsCsv, $prefix, $keepDays);
 }, 10, 1);
 
 function ptsb_process_admin_job(array $job): bool {
