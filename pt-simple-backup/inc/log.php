@@ -252,8 +252,20 @@ if (!has_action('ptsb_backup_done') && !has_action('ptsb_backup_finished') && fu
 
 
         // marca como notificado
-        update_option('ptsb_last_notified_backup_file', (string)$latest['file'], true);
-        update_option('ptsb_last_notified_payload', $payload, true);
+        update_option('ptsb_last_notified_backup_file', (string)$latest['file'], false);
+
+        $payloadKey  = 'notify-' . gmdate('Ymd-His') . '-' . substr(sha1((string)($latest['file'] ?? '')), 0, 12);
+        $payloadMeta = ptsb_blob_write_json($payloadKey, $payload);
+        if ($payloadMeta) {
+            ptsb_blob_cleanup('notify-*.json', 14 * DAY_IN_SECONDS);
+            update_option('ptsb_last_notified_payload', [
+                'created_at' => time(),
+                'path'       => $payloadMeta['path'],
+                'bytes'      => (int) $payloadMeta['bytes'],
+            ], false);
+        } else {
+            update_option('ptsb_last_notified_payload', $payload, false);
+        }
 
         ptsb_log('[notify] evento disparado para '.$latest['file']);
     } finally {
