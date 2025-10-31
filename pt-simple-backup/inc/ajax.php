@@ -38,7 +38,10 @@ add_action('wp_ajax_ptsb_status', function () {
             if (strpos($section, $k) !== false) { $percent = max($percent, $p); $stage = $k; }
         }
     }
-    $running = file_exists($cfg['lock']) && $percent < 100;
+    $running = ptsb_lock_is_locked() && $percent < 100;
+    if (!$running || $percent >= 100) {
+        ptsb_lock_release_when_idle();
+    }
 
     wp_send_json_success([
         'running' => (bool)$running,
