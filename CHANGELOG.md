@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.3] - 2025-11-08
+- Carrega "Próximas Execuções" e "Últimas execuções" via AJAX, limitando a 20 itens por requisição e evitando carregamento pesado na renderização inicial.
+- Implementa paginação dinâmica no painel, mantendo filtros e formulários responsivos sem recarregar a página.
+- Reaproveita o endpoint de detalhes para preencher manifestos sob demanda após cada carregamento.
+
 ## [1.2.2] - 2025-11-07
 - Agenda dumps do banco em job assíncrono com `mysqldump --single-transaction --quick`, compressão via `pigz`/`gzip` e upload por `rclone`.
 - Adiciona botão no painel para disparar o dump SQL sem bloquear a requisição administrativa.
