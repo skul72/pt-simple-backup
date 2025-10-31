@@ -8,6 +8,157 @@ function ptsb_can_shell() {
     return function_exists('shell_exec') && !in_array('shell_exec', $disabled, true);
 }
 
+function ptsb_rclone_should_use_fast_list(): bool {
+    $cfg = ptsb_cfg();
+    return !empty($cfg['rclone_fast_list']);
+}
+
+function ptsb_rclone_clean_duration(string $value, string $fallback): string {
+    $value = strtolower(trim($value));
+    if ($value === '') {
+        return $fallback;
+    }
+    if (!preg_match('/^[0-9smhdw.]+$/', $value)) {
+        return $fallback;
+    }
+    return $value;
+}
+
+function ptsb_rclone_common_flags(): string {
+    $cfg = ptsb_cfg();
+    $flags = [];
+    $flags[] = '--checkers ' . max(1, (int)($cfg['rclone_checkers'] ?? 4));
+    $flags[] = '--transfers ' . max(1, (int)($cfg['rclone_transfers'] ?? 2));
+    $flags[] = '--retries ' . max(1, (int)($cfg['rclone_retries'] ?? 3));
+    $flags[] = '--low-level-retries ' . max(1, (int)($cfg['rclone_low_level_retries'] ?? 5));
+
+    $sleep = ptsb_rclone_clean_duration((string)($cfg['rclone_retries_sleep'] ?? '15s'), '15s');
+    if ($sleep !== '') {
+        $flags[] = '--retries-sleep ' . $sleep;
+    }
+
+    $sleepInc = ptsb_rclone_clean_duration((string)($cfg['rclone_retries_sleep_inc'] ?? '15s'), '15s');
+    if ($sleepInc !== '') {
+        $flags[] = '--retries-sleep-increment ' . $sleepInc;
+    }
+
+    $sleepMax = ptsb_rclone_clean_duration((string)($cfg['rclone_retries_sleep_max'] ?? '2m'), '2m');
+    if ($sleepMax !== '') {
+        $flags[] = '--retries-sleep-max ' . $sleepMax;
+    }
+
+    return trim(implode(' ', array_filter($flags)));
+}
+
+function ptsb_rclone_list_flags(): string {
+    $flags = ptsb_rclone_common_flags();
+    if (ptsb_rclone_should_use_fast_list()) {
+        $flags = trim($flags . ' --fast-list');
+    }
+    return $flags;
+}
+
+function ptsb_rclone_flags_suffix(): string {
+    $flags = ptsb_rclone_common_flags();
+    return $flags === '' ? '' : ' ' . $flags;
+}
+
+function ptsb_rclone_list_flags_suffix(): string {
+    $flags = ptsb_rclone_list_flags();
+    return $flags === '' ? '' : ' ' . $flags;
+}
+
+function ptsb_rclone_delta_update_enabled(): bool {
+    $cfg = ptsb_cfg();
+    return !empty($cfg['rclone_delta_update']);
+}
+
+function ptsb_rclone_delta_month_span(): int {
+    $cfg = ptsb_cfg();
+    $span = (int)($cfg['rclone_delta_month_span'] ?? 2);
+    return max(1, min(12, $span));
+}
+
+function ptsb_rclone_delta_max_age(): string {
+    $cfg = ptsb_cfg();
+    $raw = isset($cfg['rclone_delta_max_age']) ? (string)$cfg['rclone_delta_max_age'] : '72h';
+    return ptsb_rclone_clean_duration($raw, '72h');
+}
+
+function ptsb_rclone_delta_args(): string {
+    $parts = [];
+    $maxAge = ptsb_rclone_delta_max_age();
+    if ($maxAge !== '') {
+        $parts[] = '--max-age ' . $maxAge;
+    }
+    if (ptsb_rclone_delta_update_enabled()) {
+        $parts[] = '--update';
+    }
+    return trim(implode(' ', $parts));
+}
+
+function ptsb_rclone_delta_filters(): array {
+    $filters = [];
+    try {
+        $now = ptsb_now_brt();
+    } catch (Throwable $e) {
+        $now = new DateTimeImmutable('now');
+    }
+
+    $span = ptsb_rclone_delta_month_span();
+    for ($i = 0; $i < $span; $i++) {
+        try {
+            $dt = $now->sub(new DateInterval('P' . $i . 'M'));
+        } catch (Throwable $e) {
+            break;
+        }
+        $filters[] = 'uploads/' . $dt->format('Y') . '/' . $dt->format('m') . '/**';
+    }
+
+    $filters[] = 'uploads/' . $now->format('Y') . '/**';
+    $filters[] = 'uploads/**';
+
+    $filters = array_values(array_unique(array_filter($filters)));
+    return apply_filters('ptsb_rclone_delta_filters', $filters);
+}
+
+function ptsb_rclone_env_fragment(): string {
+    $fragment = '';
+
+    $flags = ptsb_rclone_common_flags();
+    if ($flags !== '') {
+        $fragment .= ' RCLONE_FLAGS=' . escapeshellarg($flags);
+    }
+
+    $listFlags = ptsb_rclone_list_flags();
+    if ($listFlags !== '') {
+        $fragment .= ' RCLONE_LIST_FLAGS=' . escapeshellarg($listFlags);
+    }
+
+    $deltaArgs = ptsb_rclone_delta_args();
+    if ($deltaArgs !== '') {
+        $fragment .= ' RCLONE_DELTA_ARGS=' . escapeshellarg($deltaArgs);
+    }
+
+    $maxAge = ptsb_rclone_delta_max_age();
+    if ($maxAge !== '') {
+        $fragment .= ' RCLONE_DELTA_MAX_AGE=' . escapeshellarg($maxAge);
+    }
+
+    $fragment .= ' RCLONE_DELTA_MONTH_SPAN=' . escapeshellarg((string)ptsb_rclone_delta_month_span());
+    $fragment .= ' RCLONE_DELTA_UPDATE=' . escapeshellarg(ptsb_rclone_delta_update_enabled() ? '1' : '0');
+
+    $filters = ptsb_rclone_delta_filters();
+    if ($filters) {
+        $encoded = json_encode($filters, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($encoded !== false) {
+            $fragment .= ' RCLONE_DELTA_FILTERS=' . escapeshellarg($encoded);
+        }
+    }
+
+    return $fragment;
+}
+
 function ptsb_is_readable($p){ return @is_file($p) && @is_readable($p); }
 
 function ptsb_remote_manifest_ttl(): int {
@@ -184,8 +335,9 @@ function ptsb_list_remote_files(bool $forceRefresh = false) {
 
     $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . ' rclone lsf ' . escapeshellarg($cfg['remote'])
+         . ptsb_rclone_list_flags_suffix()
          . ' --files-only --format "tsp" --separator ";" --time-format RFC3339 '
-         . ' --include ' . escapeshellarg('*.tar.gz') . ' --fast-list';
+         . ' --include ' . escapeshellarg('*.tar.gz');
     $out = shell_exec($cmd);
     $rows = [];
     foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $ln) {
@@ -213,8 +365,9 @@ function ptsb_keep_map() {
     if (!ptsb_can_shell()) return [];
     $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . ' rclone lsf ' . escapeshellarg($cfg['remote'])
+         . ptsb_rclone_list_flags_suffix()
          . ' --files-only --format "p" --separator ";" '
-         . ' --include ' . escapeshellarg('*.tar.gz.keep') . ' --fast-list';
+         . ' --include ' . escapeshellarg('*.tar.gz.keep');
     $out = shell_exec($cmd);
     $map = [];
     foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $p) {
@@ -228,9 +381,11 @@ function ptsb_apply_keep_sidecar($file){
     $cfg = ptsb_cfg();
     if (!ptsb_can_shell() || $file==='') return false;
     $touch = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-           . ' rclone touch ' . escapeshellarg($cfg['remote'].$file.'.keep') . ' --no-create-dirs';
+           . ' rclone touch ' . escapeshellarg($cfg['remote'].$file.'.keep') . ' --no-create-dirs'
+           . ptsb_rclone_flags_suffix();
     $rcat  = 'printf "" | /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-           . ' rclone rcat ' . escapeshellarg($cfg['remote'].$file.'.keep');
+           . ' rclone rcat ' . escapeshellarg($cfg['remote'].$file.'.keep')
+           . ptsb_rclone_flags_suffix();
     shell_exec($touch . ' || ' . $rcat);
     return true;
 }

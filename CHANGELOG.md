@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.1] - 2025-11-06
+- Ajusta os limites padrão do rclone (checkers/transfers e política de retries com backoff) e publica env vars com delta (`--max-age`, `--update`, filtros ano/mês) para o script externo.
+- Condiciona o uso do `--fast-list` e reutiliza as mesmas flags de forma consistente nas listagens e nos jobs administrativos.
+
 ## [1.2.0] - 2025-11-05
 - Planeja chunks de backup antes de disparar o script externo, organizando partes em jobs sequenciais sem multiplicar entradas no painel.
 - Gera manifestos de chunk em JSON acessíveis pelo script (`PTS_CHUNK_PLAN_*`) e higieniza arquivos antigos automaticamente.

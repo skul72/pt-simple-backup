@@ -47,7 +47,8 @@ function ptsb_manifest_write(string $tarFile, array $add, bool $merge=true): boo
 
     $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . ' cat ' . escapeshellarg($tmp)
-         . ' | rclone rcat ' . escapeshellarg($cfg['remote'] . $jsonPath) . ' 2>/dev/null';
+         . ' | rclone rcat ' . escapeshellarg($cfg['remote'] . $jsonPath)
+         . ptsb_rclone_flags_suffix() . ' 2>/dev/null';
     shell_exec($cmd);
     @unlink($tmp);
 
@@ -205,6 +206,8 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
          . 'KEEP_DAYS='  . escapeshellarg($set['keep_days'])  . ' '
          . 'KEEP='       . escapeshellarg($set['keep_days']) . ' '
          . 'PARTS='      . escapeshellarg($partsCsv);
+
+    $env .= ptsb_rclone_env_fragment();
 
     $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
