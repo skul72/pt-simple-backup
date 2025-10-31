@@ -98,9 +98,8 @@ function ptsb_render_backup_page() {
     $cfg       = ptsb_cfg();
     $set       = ptsb_settings();
     $forceList = isset($_GET['force']) && (int)$_GET['force'] === 1;
-    $rows      = ptsb_list_remote_files($forceList);
-    $keepers = ptsb_keep_map();
-    $auto    = ptsb_auto_get();
+    $rows    = [];
+    $keepers = [];
 
     // === Abas (roteamento) ===
 $tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'backup';
@@ -122,7 +121,8 @@ if (!in_array($tab, ['backup','cycles','next','last','settings'], true)) $tab = 
     $diag[] = 'backup.sh '.(@is_executable($cfg['script_backup']) ? 'executavel' : 'sem permissao');
     $diag[] = 'restore.sh '.(@is_executable($cfg['script_restore']) ? 'executavel' : 'sem permissao');
 
-    $nonce = wp_create_nonce('ptsb_nonce');
+    $nonce   = wp_create_nonce('ptsb_nonce');
+    $referer = sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'] ?? ''));
 
     // Drive (resumo)
   $drive = ptsb_drive_info();
@@ -171,6 +171,11 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
       
 
       <?php if ($tab === 'backup'): ?>
+
+        <?php
+        $rows    = ptsb_list_remote_files($forceList);
+        $keepers = ptsb_keep_map();
+        ?>
 
         <!-- ===== ABA: BACKUP ===== -->
 
@@ -1228,458 +1233,197 @@ $nx    = $next1 ? esc_html($next1[0]['dt']->format('d/m/Y H:i')) : '(—)';
 
           <?php elseif ($tab === 'next'): ?>
 
-        <!-- ===== ABA: PRÓXIMAS EXECUÇÕES (filtro por data + paginação) ===== -->
+        <!-- ===== ABA: PRÓXIMAS EXECUÇÕES (lazy load via AJAX) ===== -->
         <?php
         $cycles  = ptsb_cycles_get();
-        $skipmap = ptsb_skipmap_get();
-
-        // ====== CONTROLES ======
-        // per/página (1..100), lembrando preferência
-        $per_default = (int) get_option('ptsb_next_per_page', 12);
-        $per_next = isset($_GET['per_next']) ? (int) $_GET['per_next'] : ($per_default > 0 ? $per_default : 12);
-        $per_next = max(1, min($per_next, 100));
-        if (isset($_GET['per_next'])) update_option('ptsb_next_per_page', $per_next, false);
+        $per_default = (int) get_option('ptsb_next_per_page', 20);
+        $per_next = isset($_GET['per_next']) ? (int) $_GET['per_next'] : ($per_default > 0 ? $per_default : 20);
+        $per_next = max(1, min($per_next, 20));
+        if (isset($_GET['per_next'])) {
+            update_option('ptsb_next_per_page', $per_next, false);
+        }
 
         $page_next = max(1, (int)($_GET['page_next'] ?? 1));
 
-        // filtro de data (YYYY-mm-dd)
-        $next_date_raw = isset($_GET['next_date']) ? preg_replace('/[^0-9\-]/','', (string)$_GET['next_date']) : '';
+        $next_date_raw = isset($_GET['next_date']) ? preg_replace('/[^0-9\-]/', '', (string)$_GET['next_date']) : '';
         $next_date     = '';
-        $dayObj        = null;
         if ($next_date_raw && preg_match('/^\d{4}-\d{2}-\d{2}$/', $next_date_raw)) {
-            try { $dayObj = new DateTimeImmutable($next_date_raw.' 00:00:00', ptsb_tz()); $next_date = $next_date_raw; }
-            catch (Throwable $e) { $dayObj = null; }
-        }
-
-        if ($dayObj) {
-    $today0 = ptsb_now_brt()->setTime(0,0);
-    if ($dayObj < $today0) {
-        $dayObj    = $today0;
-        $next_date = $dayObj->format('Y-m-d'); // mantém coerente no input
-    }
-}
-
-        // Carrega a lista:
-        // - com data: todas as ocorrências daquele dia
-        // - sem data: estratégia "per * page" (futuro ilimitado)
-        if ($cycles) {
-            if ($dayObj) {
-                $all = ptsb_cycles_occurrences_for_date($cycles, $dayObj);
-                $total_loaded = count($all);
-                $has_next = false; // sabemos o total do dia; não há "futuro" dentro do mesmo dia
-            } else {
-                $need  = $per_next * $page_next;
-                $all   = ptsb_cycles_next_occurrences($cycles, $need);
-                $total_loaded = count($all);
-                $has_next = ($total_loaded === $need);
+            try {
+                $dayObj    = new DateTimeImmutable($next_date_raw.' 00:00:00', ptsb_tz());
+                $today0    = ptsb_now_brt()->setTime(0, 0);
+                if ($dayObj < $today0) {
+                    $dayObj = $today0;
+                }
+                $next_date = $dayObj->format('Y-m-d');
+            } catch (Throwable $e) {
+                $next_date = '';
             }
-        } else {
-            $all=[]; $total_loaded=0; $has_next=false;
         }
-
-        // Fatia para a página atual
-        $offset    = ($page_next - 1) * $per_next;
-        $rows_page = array_slice($all, $offset, $per_next);
-
-        // Helpers de URL (preservando o filtro de data)
-        $base_admin = admin_url('tools.php');
-        $make_url = function($p, $per, $date='') use ($base_admin) {
-            $args = [
-                'page'      => 'pt-simple-backup',
-                'tab'       => 'next',
-                'per_next'  => (int) $per,
-                'page_next' => (int) $p,
-            ];
-            if ($date) $args['next_date'] = $date;
-            return esc_url( add_query_arg($args, $base_admin) );
-        };
         ?>
 
-        <h2 style="margin-top:8px">Próximas Execuções</h2>
+        <div id="ptsb-next-root"
+             data-ajax="<?php echo esc_url(admin_url('admin-ajax.php')); ?>"
+             data-nonce="<?php echo esc_attr($nonce); ?>"
+             data-page="<?php echo (int) $page_next; ?>"
+             data-per="<?php echo (int) $per_next; ?>"
+             data-date="<?php echo esc_attr($next_date); ?>"
+             data-referer="<?php echo esc_attr($referer); ?>"
+             data-post="<?php echo esc_url(admin_url('admin-post.php')); ?>">
 
-        <?php if (!$cycles): ?>
-          <p><em>Sem rotinas ativas.</em></p>
-        <?php elseif (!$all): ?>
-          <p><em><?php echo $dayObj ? 'Nenhuma execução neste dia.' : 'Nenhuma execução prevista. Confira as rotinas e horários.'; ?></em></p>
-        <?php else: ?>
+          <h2 style="margin-top:8px">Próximas Execuções</h2>
 
-          <!-- Controles: Filtro por data + "Exibindo N por página" -->
-          <div style="display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 10px">
-            <form method="get" id="ptsb-next-date-form" class="ptsb-list-controls" style="display:flex;align-items:center;gap:8px;margin:0">
-              <input type="hidden" name="page" value="pt-simple-backup">
-              <input type="hidden" name="tab"  value="next">
-              <input type="hidden" name="per_next"  value="<?php echo (int)$per_next; ?>">
-              <input type="hidden" name="page_next" value="1"><!-- mudar a data volta pra pág. 1 -->
-              <span>Ver execuções do dia:</span>
-              <input type="date"
-       name="next_date"
-       value="<?php echo esc_attr($next_date); ?>"
-       min="<?php echo esc_attr( ptsb_now_brt()->format('Y-m-d') ); ?>"
-       style="width:auto">
+          <?php if (!$cycles): ?>
+            <p><em>Sem rotinas ativas.</em></p>
+          <?php else: ?>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 10px">
+              <form method="get" id="ptsb-next-date-form" class="ptsb-list-controls" style="display:flex;align-items:center;gap:8px;margin:0">
+                <input type="hidden" name="page" value="pt-simple-backup">
+                <input type="hidden" name="tab"  value="next">
+                <input type="hidden" name="per_next"  value="<?php echo (int) $per_next; ?>">
+                <input type="hidden" name="page_next" value="1">
+                <span>Ver execuções do dia:</span>
+                <input type="date"
+                       name="next_date"
+                       value="<?php echo esc_attr($next_date); ?>"
+                       min="<?php echo esc_attr( ptsb_now_brt()->format('Y-m-d') ); ?>"
+                       style="width:auto">
+                <?php if ($next_date): ?>
+                  <button type="button" class="button button-small" data-reset-date>Limpar</button>
+                <?php endif; ?>
+              </form>
 
-              <?php if ($next_date): ?>
-                <a class="button" href="<?php echo esc_url( add_query_arg(['page'=>'pt-simple-backup','tab'=>'next','per_next'=>$per_next,'page_next'=>1], $base_admin) ); ?>">Limpar</a>
-              <?php endif; ?>
-            </form>
+              <form method="get" id="ptsb-next-per-form" class="ptsb-list-controls" style="display:flex;align-items:center;gap:6px;margin:0;margin-left:auto">
+                <input type="hidden" name="page" value="pt-simple-backup">
+                <input type="hidden" name="tab"  value="next">
+                <span>Exibindo</span>
+                <input type="number" name="per_next" min="1" max="20" value="<?php echo (int) $per_next; ?>" style="width:auto">
+                <span>por página</span>
+              </form>
+            </div>
 
-            <form method="get" id="ptsb-next-per-form" class="ptsb-list-controls" style="display:flex;align-items:center;gap:6px;margin:0">
-              <input type="hidden" name="page" value="pt-simple-backup">
-              <input type="hidden" name="tab" value="next">
-              <?php if ($next_date): ?><input type="hidden" name="next_date" value="<?php echo esc_attr($next_date); ?>"><?php endif; ?>
-              <input type="hidden" name="page_next" value="1"><!-- mudar per volta pra pág. 1 -->
-              <span>Exibindo</span>
-              <input type="number" name="per_next" min="1" max="100" value="<?php echo (int)$per_next; ?>" style="width:auto">
-              <span>próximas execuções — página <?php echo (int)$page_next; ?></span>
-            </form>
-          </div>
+            <table class="widefat striped" data-role="ptsb-next-table">
+              <thead>
+                <tr>
+                  <th>Data/Hora</th>
+                  <th>Rotinas</th>
+                  <th>Backup</th>
+                  <th>Ignorar</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="ptsb-loading"><td colspan="4"><em>Carregando…</em></td></tr>
+              </tbody>
+            </table>
 
-          <script>
-          (function(){
-            var f1=document.getElementById('ptsb-next-date-form');
-            if(f1){ var d=f1.querySelector('input[name="next_date"]'); d&&d.addEventListener('change', function(){ f1.submit(); }); }
-            var f2=document.getElementById('ptsb-next-per-form');
-            if(f2){ var i=f2.querySelector('input[name="per_next"]'); i&&i.addEventListener('change', function(){ f2.submit(); }); }
-          })();
-          </script>
-
-          <table class="widefat striped">
-            <thead>
-              <tr>
-                <th>Data/Hora</th>
-                <th>Rotinas</th>
-                <th>Backup</th>
-                <th>Ignorar</th>
-              </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($rows_page as $it):
-              $dtKey = $it['dt']->format('Y-m-d H:i');
-              $isIgnored = !empty($skipmap[$dtKey]);
-            ?>
-              <tr>
-                <td><?php echo esc_html( $it['dt']->format('d/m/Y H:i') ); ?></td>
-                <td><?php echo esc_html( implode(' + ', (array)$it['names']) ); ?></td>
-                <td>
-                  <?php foreach ((array)$it['letters'] as $L): $meta = ptsb_letter_meta($L); ?>
-                    <span class="ptsb-mini" title="<?php echo esc_attr($meta['label']); ?>">
-                      <span class="dashicons <?php echo esc_attr($meta['class']); ?>"></span>
-                    </span>
-                  <?php endforeach; ?>
-                </td>
-                <td>
-                  <form method="post" action="<?php echo esc_url( admin_url('admin-post.php') ); ?>" style="display:inline">
-                    <?php wp_nonce_field('ptsb_nonce'); ?>
-                    <input type="hidden" name="action" value="ptsb_cycles"/>
-                    <input type="hidden" name="do" value="skip_toggle"/>
-                    <input type="hidden" name="time" value="<?php echo esc_attr($dtKey); ?>"/>
-                    <div class="ptsb-keep-toggle">
-                      <label class="ptsb-switch" title="<?php echo $isIgnored ? 'Recolocar esta execução' : 'Ignorar esta execução'; ?>">
-                        <input type="checkbox" name="skip" value="1" <?php checked($isIgnored); ?> onchange="this.form.submit()">
-                        <span class="ptsb-slider" aria-hidden="true"></span>
-                      </label>
-                      <span class="ptsb-keep-txt">Ignorar esta execução</span>
-                    </div>
-                  </form>
-                </td>
-              </tr>
-            <?php endforeach; ?>
-            </tbody>
-          </table>
-
-          <!-- Paginação: primeira / anterior / próxima -->
-          <nav class="ptsb-pager" aria-label="Paginação das próximas execuções">
-            <?php
-              $is_first = ($page_next <= 1);
-              $prev_url = $is_first ? '#' : $make_url($page_next - 1, $per_next, $next_date);
-              // quando há filtro de data, $has_next é false; a paginação considera apenas os itens do dia
-              $has_next_effective = $dayObj ? (($offset + $per_next) < $total_loaded) : $has_next;
-              $next_url = $has_next_effective ? $make_url($page_next + 1, $per_next, $next_date) : '#';
-            ?>
-            <a class="btn <?php echo $is_first?'is-disabled':''; ?>"
-               href="<?php echo $is_first ? '#' : $make_url(1, $per_next, $next_date); ?>" aria-disabled="<?php echo $is_first?'true':'false'; ?>"
-               title="Primeira página">
-              <span class="dashicons dashicons-controls-skipback"></span>
-            </a>
-
-            <a class="btn <?php echo $is_first?'is-disabled':''; ?>"
-               href="<?php echo $prev_url; ?>" aria-disabled="<?php echo $is_first?'true':'false'; ?>"
-               title="Página anterior">
-              <span class="dashicons dashicons-arrow-left-alt2"></span>
-            </a>
-
-            <span class="status">
-              <input id="ptsb-next-pager-input" class="current" type="number" min="1" value="<?php echo (int)$page_next; ?>">
-              <span class="sep">página</span>
-            </span>
-
-            <a class="btn <?php echo !$has_next_effective?'is-disabled':''; ?>"
-               href="<?php echo $next_url; ?>" aria-disabled="<?php echo !$has_next_effective?'true':'false'; ?>"
-               title="Próxima página">
-              <span class="dashicons dashicons-arrow-right-alt2"></span>
-            </a>
-          </nav>
-
-          <script>
-            (function(){
-              var i=document.getElementById('ptsb-next-pager-input');
-              if(!i) return;
-              function go(){
-                var v = Math.max(1, parseInt(i.value,10)||1);
-                var url = new URL('<?php echo esc_js( add_query_arg(['page'=>'pt-simple-backup','tab'=>'next','per_next'=>$per_next,'page_next'=>'__P__'] + ($next_date ? ['next_date'=>$next_date] : []), admin_url('tools.php')) ); ?>'.replace('__P__', v));
-                location.href = url.toString();
-              }
-              i.addEventListener('change', go);
-              i.addEventListener('keyup', function(e){ if(e.key==='Enter'){ go(); }});
-            })();
-          </script>
-
-        <?php endif; ?>
-
-
+            <nav class="ptsb-pager" id="ptsb-next-pager" aria-label="Paginação das próximas execuções" data-has-next="0">
+              <a class="btn is-disabled" data-action="first" href="#" aria-disabled="true" title="Primeira página">
+                <span class="dashicons dashicons-controls-skipback"></span>
+              </a>
+              <a class="btn is-disabled" data-action="prev" href="#" aria-disabled="true" title="Página anterior">
+                <span class="dashicons dashicons-arrow-left-alt2"></span>
+              </a>
+              <span class="status">
+                <input class="current" type="number" min="1" value="<?php echo (int) $page_next; ?>">
+                <span class="sep">página</span>
+              </span>
+              <a class="btn is-disabled" data-action="next" href="#" aria-disabled="true" title="Próxima página">
+                <span class="dashicons dashicons-arrow-right-alt2"></span>
+              </a>
+            </nav>
+          <?php endif; ?>
+        </div>
 
       <?php elseif ($tab === 'last'): ?>
 
-  <!-- ===== ABA: ÚLTIMAS EXECUÇÕES (com filtro "Exibindo N" + paginação) ===== -->
-  <?php
+        <?php
+        $per_default_l = (int) get_option('ptsb_last_per_page', 20);
+        $per_last = isset($_GET['per_last']) ? (int) $_GET['per_last'] : ($per_default_l > 0 ? $per_default_l : 20);
+        $per_last = max(1, min($per_last, 20));
+        if (isset($_GET['per_last'])) {
+            update_option('ptsb_last_per_page', $per_last, false);
+        }
 
-  // Filtros: mostrar vencidos e/ou em dia (padrão: ambos ligados)
-$last_exp = isset($_GET['last_exp']) ? (int)!!$_GET['last_exp'] : 1; // 0 ou 1
-$last_ok  = isset($_GET['last_ok'])  ? (int)!!$_GET['last_ok']  : 1; // 0 ou 1
+        $page_last = max(1, (int)($_GET['page_last'] ?? 1));
+        $last_exp  = isset($_GET['last_exp']) ? (int) !!$_GET['last_exp'] : 1;
+        $last_ok   = isset($_GET['last_ok'])  ? (int) !!$_GET['last_ok']  : 1;
+        ?>
 
+        <div id="ptsb-last-root"
+             data-ajax="<?php echo esc_url(admin_url('admin-ajax.php')); ?>"
+             data-nonce="<?php echo esc_attr($nonce); ?>"
+             data-page="<?php echo (int) $page_last; ?>"
+             data-per="<?php echo (int) $per_last; ?>"
+             data-exp="<?php echo (int) $last_exp; ?>"
+             data-ok="<?php echo (int) $last_ok; ?>"
+             data-referer="<?php echo esc_attr($referer); ?>"
+             data-post="<?php echo esc_url(admin_url('admin-post.php')); ?>">
 
- // >>> ADIÇÃO: parâmetros de paginação desta aba
-  $per_default_l = (int) get_option('ptsb_last_per_page', 12);
-  $per_last = isset($_GET['per_last']) ? (int) $_GET['per_last'] : ($per_default_l > 0 ? $per_default_l : 12);
-  $per_last = max(1, min($per_last, 500));
-  if (isset($_GET['per_last'])) update_option('ptsb_last_per_page', $per_last, false);
+          <h2 style="margin-top:8px">Últimas execuções</h2>
 
-  $page_last = max(1, (int)($_GET['page_last'] ?? 1));
+          <div class="ptsb-toolbar" style="display:inline-flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0 10px">
+            <form method="get" id="ptsb-last-filter-form" class="ptsb-list-controls" style="margin:0">
+              <input type="hidden" name="page" value="pt-simple-backup">
+              <input type="hidden" name="tab"  value="last">
+              <input type="hidden" name="per_last" value="<?php echo (int) $per_last; ?>">
+              <input type="hidden" name="page_last" value="1">
+              <label style="display:inline-flex;align-items:center;gap:6px">
+                <input type="checkbox" name="last_exp" value="1" <?php checked($last_exp); ?>>
+                <span>Mostrar vencidos</span>
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:6px">
+                <input type="checkbox" name="last_ok" value="1" <?php checked($last_ok); ?>>
+                <span>Mostrar em dia</span>
+              </label>
+            </form>
 
-   // 1) filtra por vencidos/ok
-$filtered = [];
-foreach ($rows as $r) {
-  $time = $r['time']; $file = $r['file'];
-  $is_kept  = !empty($keepers[$file]);
+            <form method="get" id="ptsb-last-per-form" class="ptsb-list-controls" style="display:flex;align-items:center;gap:6px;margin:0;margin-left:auto">
+              <input type="hidden" name="page" value="pt-simple-backup">
+              <input type="hidden" name="tab"  value="last">
+              <input type="hidden" name="page_last" value="1">
+              <input type="hidden" name="last_exp" value="<?php echo (int) $last_exp; ?>">
+              <input type="hidden" name="last_ok"  value="<?php echo (int) $last_ok; ?>">
+              <span>Exibindo</span>
+              <input type="number" name="per_last" min="1" max="20" value="<?php echo (int) $per_last; ?>" style="width:auto">
+              <span class="ptsb-last-total">carregando…</span>
+            </form>
+          </div>
 
-  $manifest = ptsb_manifest_read($file);
-  $keepDays = ptsb_manifest_keep_days($manifest, (int)$set['keep_days']);
+          <table class="widefat striped" data-role="ptsb-last-table">
+            <thead>
+              <tr>
+                <th>Data/Hora</th>
+                <th>Arquivo</th>
+                <th>Rotina</th>
+                <th>Backup</th>
+                <th>Retenção</th>
+                <th>Tamanho</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="ptsb-loading"><td colspan="6"><em>Carregando…</em></td></tr>
+            </tbody>
+          </table>
 
-  $is_expired = false;
-  if (!$is_kept && is_int($keepDays) && $keepDays > 0) {
-      $ri = ptsb_retention_calc($time, $keepDays);
-      $is_expired = ($ri['x'] >= $ri['y']);
-  }
-
-  // aplica o filtro
-  if ( ($is_expired && !$last_exp) || (!$is_expired && !$last_ok) ) {
-      continue;
-  }
-  $filtered[] = $r;
-}
-
-$total_last   = count($filtered);
-$total_pages_l= max(1, (int) ceil($total_last / $per_last));
-if ($page_last > $total_pages_l) $page_last = $total_pages_l;
-
-$offset_last = ($page_last - 1) * $per_last;
-$rows_last   = array_slice($filtered, $offset_last, $per_last);
-
-
-    $base_admin = admin_url('tools.php');
-$make_url_l = function($p, $per) use ($base_admin, $last_exp, $last_ok) {
-  return esc_url( add_query_arg([
-    'page'      => 'pt-simple-backup',
-    'tab'       => 'last',
-    'per_last'  => (int)$per,
-    'page_last' => (int)$p,
-    'last_exp'  => (int)!!$last_exp,
-    'last_ok'   => (int)!!$last_ok,
-  ], $base_admin) );
-};
-
-
-  ?>
-
-  <h2 style="margin-top:8px">Últimas execuções</h2>
-
-  <?php if (!$rows_last): ?>
-    <p><em>Nenhum backup concluído encontrado no Drive.</em></p>
-  <?php else: ?>
-
-    <!-- Toolbar: filtros (esq) + Exibindo (dir) -->
-<div class="ptsb-toolbar" style="display:inline-flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0 10px">
-  <!-- Checkboxes -->
-  <form method="get" id="ptsb-last-filter-form" class="ptsb-list-controls" style="margin:0">
-    <input type="hidden" name="page" value="pt-simple-backup">
-    <input type="hidden" name="tab"  value="last">
-    <input type="hidden" name="per_last"  value="<?php echo (int)$per_last; ?>">
-    <input type="hidden" name="page_last" value="1">
-    <label style="display:inline-flex;align-items:center;gap:6px">
-      <input type="checkbox" name="last_exp" value="1" <?php checked($last_exp); ?>>
-      <span>Mostrar vencidos</span>
-    </label>
-    <label style="display:inline-flex;align-items:center;gap:6px">
-      <input type="checkbox" name="last_ok" value="1" <?php checked($last_ok); ?>>
-      <span>Mostrar em dia</span>
-    </label>
-  </form>
-
-  <!-- “Exibindo …” alinhado à direita -->
-  <form method="get" id="ptsb-last-per-form"
-        class="ptsb-list-controls"
-        style="display:flex;align-items:center;gap:6px;margin:0;margin-left:auto">
-    <input type="hidden" name="page" value="pt-simple-backup">
-    <input type="hidden" name="tab"  value="last">
-    <input type="hidden" name="page_last" value="1">
-    <!-- PRESERVA OS FILTROS ATUAIS -->
-    <input type="hidden" name="last_exp" value="<?php echo (int)$last_exp; ?>">
-    <input type="hidden" name="last_ok"  value="<?php echo (int)$last_ok; ?>">
-
-    <span>Exibindo</span>
-    <input type="number" name="per_last" min="1" max="500"
-           value="<?php echo (int)$per_last; ?>" style="width:auto">
-    <span>de <?php echo (int)$total_last; ?> execuções — página
-      <?php echo (int)$page_last; ?> de <?php echo (int)$total_pages_l; ?></span>
-  </form>
-</div>
-
-<script>
-(function(){
-  var f=document.getElementById('ptsb-last-filter-form');
-  if(f){ f.addEventListener('change', function(){ f.submit(); }); }
-
-  var g=document.getElementById('ptsb-last-per-form');
-  if(g){
-    var i=g.querySelector('input[name="per_last"]');
-    if(i){ i.addEventListener('change', function(){ g.submit(); }); }
-  }
-})();
-</script>
-
-
-    <table class="widefat striped">
-      <thead>
-        <tr>
-          <th>Data/Hora</th>
-          <th>Arquivo</th>
-          <th>Rotina</th>
-          <th>Backup</th>
-          <th>Retenção</th>
-          <th>Tamanho</th>
-        </tr>
-      </thead>
-      <tbody>
-      
-<?php foreach ($rows_last as $r):
-  $time = $r['time']; $file = $r['file']; $size = (int)($r['size'] ?? 0);
-  $manifest     = ptsb_manifest_read($file);
-  $rotina_label = ptsb_run_kind_label($manifest, $file);
-  $letters      = [];
-  if (!empty($manifest['parts'])) $letters = ptsb_parts_to_letters($manifest['parts']);
-  if (!$letters) $letters = ['D','P','T','W','S','M','O'];
-  $is_kept  = !empty($keepers[$file]);
-  $keepDays = ptsb_manifest_keep_days($manifest, (int)$set['keep_days']);
-
-  // >>> NOVO: detecção de vencido (somente se não for "sempre manter")
-  $ri = null; $is_expired = false;
-  if (!$is_kept && is_int($keepDays) && $keepDays > 0) {
-      $ri = ptsb_retention_calc($time, $keepDays);
-      $is_expired = ($ri['x'] >= $ri['y']);
-  }
-    $tr_class = ($is_expired ? ' class="ptsb-expired"' : '');
-?>
-<tr>
-    <tr<?php echo $tr_class; ?>>
-  <td><?php echo esc_html( ptsb_fmt_local_dt($time) ); ?></td>
-  <td><?php echo esc_html($file); ?></td>
-  <td><?php echo esc_html($rotina_label); ?></td>
-  <td>
-    <?php foreach ($letters as $L): $meta = ptsb_letter_meta($L); ?>
-      <span class="ptsb-mini" title="<?php echo esc_attr($meta['label']); ?>">
-        <span class="dashicons <?php echo esc_attr($meta['class']); ?>"></span>
-      </span>
-    <?php endforeach; ?>
-  </td>
-  <td>
-    <?php if ($is_kept): ?>
-      <span class="ptsb-ret sempre" title="Sempre manter">sempre</span>
-    <?php elseif (is_int($keepDays) && $keepDays > 0):
-      $ri = $ri ?: ptsb_retention_calc($time, $keepDays); ?>
-      <span class="ptsb-ret" title="<?php echo esc_attr('Dia '.$ri['x'].' de '.$ri['y']); ?>">
-        <?php echo (int)$ri['x'].'/'.(int)$ri['y']; ?>
-      </span>
-      <?php if ($is_expired): ?>
-        <!-- >>> NOVO: selo VENCIDO nesta aba -->
-        <span class="ptsb-tag vencido">VENCIDO</span>
-      <?php endif; ?>
-    <?php else: ?>
-      —
-    <?php endif; ?>
-  </td>
-  <td><?php echo esc_html( ptsb_hsize($size) ); ?></td>
-</tr>
-<?php endforeach; ?>
-
-      
-      </tbody>
-    </table>
-
-    <?php if ($total_pages_l > 1): ?>
-      <nav class="ptsb-pager" aria-label="Paginação das últimas execuções">
-        <a class="btn <?php echo $page_last<=1?'is-disabled':''; ?>"
-           href="<?php echo $page_last>1 ? $make_url_l(1, $per_last) : '#'; ?>" aria-disabled="<?php echo $page_last<=1?'true':'false'; ?>"
-           title="Primeira página">
-          <span class="dashicons dashicons-controls-skipback"></span>
-        </a>
-
-        <a class="btn <?php echo $page_last<=1?'is-disabled':''; ?>"
-           href="<?php echo $page_last>1 ? $make_url_l($page_last-1, $per_last) : '#'; ?>" aria-disabled="<?php echo $page_last<=1?'true':'false'; ?>"
-           title="Página anterior">
-          <span class="dashicons dashicons-arrow-left-alt2"></span>
-        </a>
-
-        <span class="status">
-          <input id="ptsb-last-pager-input" class="current" type="number"
-                 min="1" max="<?php echo (int)$total_pages_l; ?>" value="<?php echo (int)$page_last; ?>">
-          <span class="sep">de</span>
-          <span class="total"><?php echo (int)$total_pages_l; ?></span>
-        </span>
-
-        <a class="btn <?php echo $page_last>=$total_pages_l?'is-disabled':''; ?>"
-           href="<?php echo $page_last<$total_pages_l ? $make_url_l($page_last+1, $per_last) : '#'; ?>" aria-disabled="<?php echo $page_last>=$total_pages_l?'true':'false'; ?>"
-           title="Próxima página">
-          <span class="dashicons dashicons-arrow-right-alt2"></span>
-        </a>
-
-        <a class="btn <?php echo $page_last>=$total_pages_l?'is-disabled':''; ?>"
-           href="<?php echo $page_last<$total_pages_l ? $make_url_l($total_pages_l, $per_last) : '#'; ?>" aria-disabled="<?php echo $page_last>=$total_pages_l?'true':'false'; ?>"
-           title="Última página">
-          <span class="dashicons dashicons-controls-skipforward"></span>
-        </a>
-      </nav>
-
-      <script>
-        (function(){
-          var i=document.getElementById('ptsb-last-pager-input');
-          if(!i) return;
-          function go(){
-            var min=parseInt(i.min,10)||1, max=parseInt(i.max,10)||1;
-            var v = Math.max(min, Math.min(max, parseInt(i.value,10)||min));
-            location.href = '<?php echo esc_js( add_query_arg([
-  'page'=>'pt-simple-backup','tab'=>'last',
-  'per_last'=>$per_last,'page_last'=>'__P__',
-  'last_exp'=>(int)$last_exp,'last_ok'=>(int)$last_ok
-], admin_url('tools.php')) ); ?>'.replace('__P__', v);
-
-          }
-          i.addEventListener('change', go);
-          i.addEventListener('keyup', function(e){ if(e.key==='Enter'){ go(); }});
-        })();
-      </script>
-    <?php endif; ?>
-
-  <?php endif; // rows_last ?>
-
+          <nav class="ptsb-pager" id="ptsb-last-pager" aria-label="Paginação das últimas execuções" data-total-pages="1">
+            <a class="btn is-disabled" data-action="first" href="#" aria-disabled="true" title="Primeira página">
+              <span class="dashicons dashicons-controls-skipback"></span>
+            </a>
+            <a class="btn is-disabled" data-action="prev" href="#" aria-disabled="true" title="Página anterior">
+              <span class="dashicons dashicons-arrow-left-alt2"></span>
+            </a>
+            <span class="status">
+              <input class="current" type="number" min="1" value="<?php echo (int) $page_last; ?>">
+              <span class="sep">de</span>
+              <span class="total">1</span>
+            </span>
+            <a class="btn is-disabled" data-action="next" href="#" aria-disabled="true" title="Próxima página">
+              <span class="dashicons dashicons-arrow-right-alt2"></span>
+            </a>
+            <a class="btn is-disabled" data-action="last" href="#" aria-disabled="true" title="Última página">
+              <span class="dashicons dashicons-controls-skipforward"></span>
+            </a>
+          </nav>
+        </div>
 
 <?php elseif ($tab === 'settings'): ?>
 
