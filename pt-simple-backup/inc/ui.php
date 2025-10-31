@@ -95,9 +95,10 @@ function ptsb_cycle_params_label_ui(array $cycle): string {
 function ptsb_render_backup_page() {
     if (!current_user_can('manage_options')) return;
 
-    $cfg     = ptsb_cfg();
-    $set     = ptsb_settings();
-    $rows    = ptsb_list_remote_files();
+    $cfg       = ptsb_cfg();
+    $set       = ptsb_settings();
+    $forceList = isset($_GET['force']) && (int)$_GET['force'] === 1;
+    $rows      = ptsb_list_remote_files($forceList);
     $keepers = ptsb_keep_map();
     $auto    = ptsb_auto_get();
 

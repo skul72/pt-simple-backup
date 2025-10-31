@@ -194,6 +194,10 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
         return;
     }
 
+    if (function_exists('ptsb_remote_manifest_invalidate')) {
+        ptsb_remote_manifest_invalidate();
+    }
+
     $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . 'REMOTE='     . escapeshellarg($cfg['remote'])     . ' '
          . 'WP_PATH='    . escapeshellarg(ABSPATH)            . ' '
