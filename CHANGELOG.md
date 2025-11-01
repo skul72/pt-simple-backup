@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.7] - 2025-11-12
+- Remove o disparo manual do WP-Cron via painel, esperando apenas o agendamento padrão.
+- Orienta no painel como configurar um cron do sistema chamando `wp cron event run --due-now`.
+
 ## [1.2.6] - 2025-11-11
 - Cria arquivo de estado por plano com progresso dos chunks, mantendo tentativas, agendamentos e token de corrida por parte.
 - Expõe o caminho e a versão do estado via variáveis de ambiente para o script externo retomar apenas os chunks pendentes.
