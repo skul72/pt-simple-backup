@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.6] - 2025-11-11
+- Cria arquivo de estado por plano com progresso dos chunks, mantendo tentativas, agendamentos e token de corrida por parte.
+- Expõe o caminho e a versão do estado via variáveis de ambiente para o script externo retomar apenas os chunks pendentes.
+- Disponibiliza helpers PHP para marcar chunks em execução, concluídos, com erro temporário ou exceção permanente com backoff.
+- Limpa automaticamente estados antigos ao remover planos expirados para evitar acúmulo.
+
 ## [1.2.5] - 2025-11-10
 - Reserva arquivo de telemetria por execução, expondo caminho via `PTS_TELEMETRY_FILE` e guardando contexto da execução.
 - Consolida resumos leves de métricas (duração por etapa, bytes, I/O wait, memória pico) com expiração automática do histórico.

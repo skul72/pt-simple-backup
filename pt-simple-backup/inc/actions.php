@@ -109,6 +109,322 @@ function ptsb_backup_plan_storage_dir(): ?string {
 
 function ptsb_backup_plan_cleanup(string $dir, int $maxAge = 86400): void {
     ptsb_blob_cleanup('plan-*.json', $maxAge, $dir);
+    ptsb_blob_cleanup('plan-state-*.json', $maxAge, $dir);
+}
+
+function ptsb_backup_plan_state_key(string $planId): string {
+    return 'plan-state-' . (string) $planId;
+}
+
+function ptsb_backup_plan_state_path(string $planId): ?string {
+    $planId = trim((string) $planId);
+    if ($planId === '') {
+        return null;
+    }
+
+    return ptsb_upload_storage_path(ptsb_backup_plan_state_key($planId), '.json');
+}
+
+function ptsb_backup_plan_state_seed(array $plan): array {
+    $now    = time();
+    $chunks = [];
+    $order  = [];
+
+    $list = isset($plan['chunks']) && is_array($plan['chunks']) ? $plan['chunks'] : [];
+    foreach ($list as $chunk) {
+        $id = isset($chunk['id']) ? (int) $chunk['id'] : 0;
+        if ($id <= 0) {
+            continue;
+        }
+
+        $slug = isset($chunk['slug']) ? (string) $chunk['slug'] : '';
+        $order[] = $id;
+
+        $parts = isset($chunk['parts']) && is_array($chunk['parts']) ? array_values($chunk['parts']) : [];
+        $label = isset($chunk['label']) ? (string) $chunk['label'] : '';
+
+        $chunks[$id] = [
+            'id'             => $id,
+            'slug'           => $slug,
+            'label'          => $label,
+            'parts'          => $parts,
+            'status'         => 'pending',
+            'attempts'       => 0,
+            'next_run_at'    => 0,
+            'last_error'     => '',
+            'permanent'      => false,
+            'token'          => '',
+            'started_at'     => null,
+            'finished_at'    => null,
+            'last_attempt_at'=> null,
+            'updated_at'     => $now,
+        ];
+
+        if (isset($chunk['strategy']) && is_array($chunk['strategy'])) {
+            $chunks[$id]['strategy'] = $chunk['strategy'];
+        }
+        if (isset($chunk['uploads']) && is_array($chunk['uploads'])) {
+            $chunks[$id]['uploads'] = $chunk['uploads'];
+        }
+    }
+
+    return [
+        'plan_id'     => isset($plan['id']) ? (string) $plan['id'] : '',
+        'created_at'  => $now,
+        'updated_at'  => $now,
+        'finished_at' => null,
+        'finished'    => false,
+        'order'       => $order,
+        'chunks'      => $chunks,
+    ];
+}
+
+function ptsb_backup_chunk_state_write(string $planId, array $state): ?array {
+    $planId = trim((string) $planId);
+    if ($planId === '') {
+        return null;
+    }
+
+    $state['plan_id'] = $planId;
+    $state['updated_at'] = time();
+
+    $json = wp_json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    if ($json === false) {
+        return null;
+    }
+
+    $path = ptsb_backup_plan_state_path($planId);
+    if ($path === null) {
+        return null;
+    }
+
+    $written = @file_put_contents($path, $json);
+    if ($written === false) {
+        return null;
+    }
+
+    return [
+        'path'  => $path,
+        'bytes' => (int) $written,
+    ];
+}
+
+function ptsb_backup_plan_state_bootstrap(array $plan): ?array {
+    $seed = ptsb_backup_plan_state_seed($plan);
+    if (empty($seed['plan_id'])) {
+        return null;
+    }
+
+    $meta = ptsb_backup_chunk_state_write($seed['plan_id'], $seed);
+    if ($meta === null) {
+        return null;
+    }
+
+    $meta['state'] = $seed;
+    return $meta;
+}
+
+function ptsb_backup_chunk_state_read(string $planId): array {
+    $planId = trim((string) $planId);
+    if ($planId === '') {
+        return [];
+    }
+
+    $path = ptsb_backup_plan_state_path($planId);
+    if ($path === null || !@file_exists($path)) {
+        return [];
+    }
+
+    $raw = @file_get_contents($path);
+    if ($raw === false) {
+        return [];
+    }
+
+    $data = json_decode((string) $raw, true);
+    if (!is_array($data)) {
+        return [];
+    }
+
+    if (!isset($data['plan_id']) || $data['plan_id'] === '') {
+        $data['plan_id'] = $planId;
+    }
+
+    return $data;
+}
+
+function ptsb_backup_chunk_retry_delay(int $attempts): int {
+    $attempts = max(1, $attempts);
+    $base     = 30;
+    $max      = 1800;
+    $exp      = min($attempts - 1, 5);
+    $delay    = (int) round($base * pow(2, $exp));
+    $delay    = (int) min($max, max($base, $delay));
+
+    return (int) apply_filters('ptsb_chunk_retry_delay', $delay, $attempts);
+}
+
+function ptsb_backup_chunk_state_all_finished(array $state): bool {
+    if (empty($state['chunks']) || !is_array($state['chunks'])) {
+        return true;
+    }
+
+    foreach ($state['chunks'] as $chunk) {
+        $status = isset($chunk['status']) ? (string) $chunk['status'] : '';
+        if (!in_array($status, ['done', 'permanent'], true)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function ptsb_backup_chunk_state_mark_running(string $planId, int $chunkId): ?string {
+    $state = ptsb_backup_chunk_state_read($planId);
+    if (empty($state['chunks'][$chunkId]) || !is_array($state['chunks'][$chunkId])) {
+        return null;
+    }
+
+    $chunk = $state['chunks'][$chunkId];
+    $status = isset($chunk['status']) ? (string) $chunk['status'] : '';
+    if (!in_array($status, ['pending', 'retry', 'running'], true)) {
+        return null;
+    }
+
+    if ($status === 'running' && !empty($chunk['token'])) {
+        return (string) $chunk['token'];
+    }
+
+    $now = time();
+    $nextRun = isset($chunk['next_run_at']) ? (int) $chunk['next_run_at'] : 0;
+    if ($status !== 'running' && $nextRun > $now) {
+        return null;
+    }
+
+    $token = ptsb_uuid4();
+    $state['chunks'][$chunkId]['status']          = 'running';
+    $state['chunks'][$chunkId]['token']           = $token;
+    $state['chunks'][$chunkId]['started_at']      = $now;
+    $state['chunks'][$chunkId]['last_attempt_at'] = $now;
+    $state['chunks'][$chunkId]['next_run_at']     = 0;
+    $state['chunks'][$chunkId]['updated_at']      = $now;
+    $state['chunks'][$chunkId]['last_error']      = '';
+    $state['chunks'][$chunkId]['permanent']       = false;
+
+    $meta = ptsb_backup_chunk_state_write($planId, $state);
+    if ($meta === null) {
+        return null;
+    }
+
+    return $token;
+}
+
+function ptsb_backup_chunk_state_mark_done(string $planId, int $chunkId, array $meta = [], ?string $token = null): bool {
+    $state = ptsb_backup_chunk_state_read($planId);
+    if (empty($state['chunks'][$chunkId]) || !is_array($state['chunks'][$chunkId])) {
+        return false;
+    }
+
+    $chunkToken = isset($state['chunks'][$chunkId]['token']) ? (string) $state['chunks'][$chunkId]['token'] : '';
+    if ($token !== null && $chunkToken !== '' && $chunkToken !== $token) {
+        return false;
+    }
+
+    $now = time();
+    $state['chunks'][$chunkId]['status']          = 'done';
+    $state['chunks'][$chunkId]['token']           = '';
+    $state['chunks'][$chunkId]['finished_at']     = $now;
+    $state['chunks'][$chunkId]['updated_at']      = $now;
+    $state['chunks'][$chunkId]['next_run_at']     = 0;
+    $state['chunks'][$chunkId]['permanent']       = false;
+    $state['chunks'][$chunkId]['last_error']      = '';
+    $state['chunks'][$chunkId]['last_attempt_at'] = $now;
+
+    foreach ($meta as $key => $value) {
+        $state['chunks'][$chunkId][$key] = $value;
+    }
+
+    if (ptsb_backup_chunk_state_all_finished($state)) {
+        $state['finished'] = true;
+        if (empty($state['finished_at'])) {
+            $state['finished_at'] = $now;
+        }
+    }
+
+    return ptsb_backup_chunk_state_write($planId, $state) !== null;
+}
+
+function ptsb_backup_chunk_state_mark_failed(string $planId, int $chunkId, string $error = '', bool $permanent = false, ?string $token = null): bool {
+    $state = ptsb_backup_chunk_state_read($planId);
+    if (empty($state['chunks'][$chunkId]) || !is_array($state['chunks'][$chunkId])) {
+        return false;
+    }
+
+    $chunkToken = isset($state['chunks'][$chunkId]['token']) ? (string) $state['chunks'][$chunkId]['token'] : '';
+    if ($token !== null && $chunkToken !== '' && $chunkToken !== $token) {
+        return false;
+    }
+
+    $now = time();
+    $attempts = isset($state['chunks'][$chunkId]['attempts']) ? (int) $state['chunks'][$chunkId]['attempts'] : 0;
+    $attempts++;
+
+    $state['chunks'][$chunkId]['attempts']       = $attempts;
+    $state['chunks'][$chunkId]['last_error']     = $error;
+    $state['chunks'][$chunkId]['last_attempt_at']= $now;
+    $state['chunks'][$chunkId]['updated_at']     = $now;
+
+    if ($permanent) {
+        $state['chunks'][$chunkId]['status']      = 'permanent';
+        $state['chunks'][$chunkId]['permanent']   = true;
+        $state['chunks'][$chunkId]['finished_at'] = $now;
+        $state['chunks'][$chunkId]['next_run_at'] = 0;
+    } else {
+        $delay = ptsb_backup_chunk_retry_delay($attempts);
+        $state['chunks'][$chunkId]['status']      = 'retry';
+        $state['chunks'][$chunkId]['permanent']   = false;
+        $state['chunks'][$chunkId]['finished_at'] = null;
+        $state['chunks'][$chunkId]['next_run_at'] = $now + $delay;
+    }
+
+    $state['chunks'][$chunkId]['token'] = '';
+
+    if ($permanent && ptsb_backup_chunk_state_all_finished($state)) {
+        $state['finished'] = true;
+        if (empty($state['finished_at'])) {
+            $state['finished_at'] = $now;
+        }
+    }
+
+    return ptsb_backup_chunk_state_write($planId, $state) !== null;
+}
+
+function ptsb_backup_chunk_state_next(string $planId, ?int $now = null): ?array {
+    $state = ptsb_backup_chunk_state_read($planId);
+    if (empty($state['chunks']) || !is_array($state['chunks'])) {
+        return null;
+    }
+
+    $now = $now ?? time();
+    $order = isset($state['order']) && is_array($state['order']) ? $state['order'] : array_keys($state['chunks']);
+
+    foreach ($order as $id) {
+        $id = (int) $id;
+        if (empty($state['chunks'][$id])) {
+            continue;
+        }
+
+        $chunk  = $state['chunks'][$id];
+        $status = isset($chunk['status']) ? (string) $chunk['status'] : '';
+        $nextRun = isset($chunk['next_run_at']) ? (int) $chunk['next_run_at'] : 0;
+
+        if (in_array($status, ['pending', 'retry'], true) && $nextRun <= $now) {
+            $chunk['plan_id']   = $state['plan_id'] ?? $planId;
+            $chunk['state_path']= ptsb_backup_plan_state_path($planId);
+            return $chunk;
+        }
+    }
+
+    return null;
 }
 
 function ptsb_backup_plan_write(array $plan): ?array {
@@ -128,10 +444,14 @@ function ptsb_backup_plan_write(array $plan): ?array {
         return null;
     }
 
+    $stateMeta = ptsb_backup_plan_state_bootstrap($plan);
+
     return [
-        'path'  => $blob['path'],
-        'plan'  => $plan,
-        'bytes' => (int) $blob['bytes'],
+        'path'       => $blob['path'],
+        'plan'       => $plan,
+        'bytes'      => (int) $blob['bytes'],
+        'state_path' => isset($stateMeta['path']) ? (string) $stateMeta['path'] : '',
+        'state'      => isset($stateMeta['state']) && is_array($stateMeta['state']) ? $stateMeta['state'] : [],
     ];
 }
 
@@ -470,6 +790,7 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
                 'total_chunks' => isset($plan['total_chunks']) ? (int) $plan['total_chunks'] : 0,
                 'version'      => isset($plan['version']) ? (int) $plan['version'] : 0,
                 'bytes'        => isset($planMeta['bytes']) ? (int) $planMeta['bytes'] : 0,
+                'state_path'   => isset($planMeta['state_path']) ? (string) $planMeta['state_path'] : '',
             ];
             update_option('ptsb_last_chunk_plan', $summary, false);
         }
@@ -502,6 +823,10 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
              .  ' PTS_CHUNK_PLAN_ID='   . escapeshellarg((string)($planData['id'] ?? ''))
              .  ' PTS_CHUNK_PLAN_TOTAL=' . escapeshellarg((string)($planData['total_chunks'] ?? ''))
              .  ' PTS_CHUNK_PLAN_VERSION=' . escapeshellarg((string)($planData['version'] ?? ''));
+        if (!empty($planMeta['state_path'])) {
+            $env .= ' PTS_CHUNK_STATE_FILE=' . escapeshellarg((string) $planMeta['state_path'])
+                 .  ' PTS_CHUNK_STATE_VERSION=' . escapeshellarg('1');
+        }
     }
 
     if ($telemetry) {
