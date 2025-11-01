@@ -806,7 +806,8 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
         'origin'    => isset($intent['origin']) ? (string) $intent['origin'] : '',
     ]);
 
-    $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
+    $envPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
+    $env = $envPath . ' LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . 'REMOTE='           . escapeshellarg($cfg['remote'])     . ' '
          . 'WP_PATH='          . escapeshellarg(ABSPATH)            . ' '
          . 'PREFIX='           . escapeshellarg($prefix)            . ' '
@@ -839,10 +840,25 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
         $env .= ' RCLONE_TUNING=' . escapeshellarg($tuningJson);
     }
 
+    $limits = ptsb_job_resource_constraints($cfg, 'backup', $envPath);
+    if (!empty($limits['env'])) {
+        foreach ($limits['env'] as $key => $value) {
+            $env .= ' ' . $key . '=' . escapeshellarg((string) $value);
+        }
+    }
+
+    $wrapperPrefix = '';
+    if (!empty($limits['wrappers'])) {
+        $wrappers = array_values(array_filter($limits['wrappers'], 'strlen'));
+        if ($wrappers) {
+            $wrapperPrefix = implode(' ', $wrappers) . ' ';
+        }
+    }
+
     // guarda as partes usadas neste disparo (fallback para a notificação)
     update_option('ptsb_last_run_parts', (string)$partsCsv, true);
 
-    $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
+    $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
 
     shell_exec($cmd);
@@ -1705,11 +1721,28 @@ update_option('ptsb_last_run_intent', [
         $file = sanitize_text_field($_POST['file']);
 
         if ($act === 'restore') {
-            $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
+            $envPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
+            $env = $envPath . ' LC_ALL=C.UTF-8 LANG=C.UTF-8 '
                  . 'REMOTE=' . escapeshellarg($cfg['remote']) . ' '
                  . 'FILE='   . escapeshellarg($file)        . ' '
                  . 'WP_PATH='. escapeshellarg(ABSPATH);
-            $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_restore'])
+
+            $limits = ptsb_job_resource_constraints($cfg, 'restore', $envPath);
+            if (!empty($limits['env'])) {
+                foreach ($limits['env'] as $key => $value) {
+                    $env .= ' ' . $key . '=' . escapeshellarg((string) $value);
+                }
+            }
+
+            $wrapperPrefix = '';
+            if (!empty($limits['wrappers'])) {
+                $wrappers = array_values(array_filter($limits['wrappers'], 'strlen'));
+                if ($wrappers) {
+                    $wrapperPrefix = implode(' ', $wrappers) . ' ';
+                }
+            }
+
+            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_restore'])
                  . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
             shell_exec($cmd);
             add_settings_error('ptsb', 'rs_started', 'Restaura&ccedil;&atilde;o iniciada para: '.$file.'.', 'updated');
