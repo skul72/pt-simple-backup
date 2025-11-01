@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.10] - 2025-11-01
+- Reorganiza `ui.php` em funções específicas por aba, reduzindo duplicação de HTML/JS e preservando os recursos já consolidados.
+- Normaliza a leitura do manifesto remoto para calcular corretamente a quantidade e o tamanho dos backups exibidos no cabeçalho.
+- Mantém o carregamento de assets e controles existentes, preparando o painel para evoluções futuras sem repetir lógica.
+
 ## [1.2.9] - 2025-11-14
 - Reescreve o painel do backup removendo seções duplicadas e código morto do `ui.php`, mantendo apenas a estrutura necessária para cada aba.
 - Simplifica os formulários e scripts inline, utilizando chips com `name` direto e paginação única para reduzir redundâncias.
