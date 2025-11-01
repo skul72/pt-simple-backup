@@ -1,5 +1,8 @@
 # Changelog
 
+## [1.2.9] - 2025-11-14
+- Remove código redundante da interface administrativa, consolidando abas e scripts para facilitar manutenção.
+
 ## [1.2.8] - 2025-11-13
 - Aplica `nice` e `ionice` aos disparos de backup e restauração quando disponíveis, evitando que os processos disputem prioridade em horários de pico.
 - Limita o uso de CPU com `cpulimit` (70%) sempre que o binário existir, expondo as restrições via variáveis de ambiente para o script externo.
