@@ -885,12 +885,6 @@ function ptsb_enqueue_backup_job(array $job, int $delay = 5): ?string {
         wp_schedule_single_event(time() + $delay, 'ptsb_run_backup_job', [$id]);
     }
 
-    if (!wp_doing_cron()) {
-        if (function_exists('spawn_cron')) {
-            spawn_cron(time());
-        }
-    }
-
     return $id;
 }
 
@@ -915,10 +909,6 @@ function ptsb_enqueue_admin_task(string $task, array $payload = [], int $delay =
     $delay = max(1, $delay);
     if (!wp_next_scheduled('ptsb_run_admin_task', [$id])) {
         wp_schedule_single_event(time() + $delay, 'ptsb_run_admin_task', [$id]);
-    }
-
-    if (!wp_doing_cron() && function_exists('spawn_cron')) {
-        spawn_cron(time());
     }
 
     return $id;

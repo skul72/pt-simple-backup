@@ -1438,6 +1438,21 @@ $nx    = $next1 ? esc_html($next1[0]['dt']->format('d/m/Y H:i')) : '(—)';
         Status: <?php echo esc_html(implode(' | ', $diag)); ?>
       </p>
 
+  <h2 style="margin-top:24px">Cron do sistema</h2>
+  <?php
+      $wpCronDisabled = defined('DISABLE_WP_CRON') && DISABLE_WP_CRON;
+      $cronStatus = $wpCronDisabled
+          ? 'WP-Cron por visitas está DESATIVADO.'
+          : 'WP-Cron por visitas está ATIVADO (por visitas).';
+      $cronAdvice = 'Recomendamos manter um cron do sistema executando `wp cron event run --due-now` para rodar os agendamentos sem atrasos.';
+      $basePath = function_exists('wp_normalize_path') ? wp_normalize_path(ABSPATH) : ABSPATH;
+      $basePath = untrailingslashit($basePath);
+      $cronCmd  = '* * * * * cd ' . escapeshellarg($basePath) . ' && wp cron event run --due-now --quiet';
+  ?>
+  <p><?php echo esc_html($cronStatus . ' ' . $cronAdvice); ?></p>
+  <pre style="margin:10px 0"><code><?php echo esc_html($cronCmd); ?></code></pre>
+  <p class="description">Ajuste o intervalo conforme necessário (ex.: <code>*/5</code> para a cada 5 minutos) e garanta que o WP-CLI esteja disponível no servidor.</p>
+
   <div style="display:flex;align-items:center;gap:8px;margin:10px 0 6px">
     <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"
           onsubmit="return confirm('Limpar todo o log (incluindo rotações)?');" style="margin-left:auto">
