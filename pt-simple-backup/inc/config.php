@@ -14,8 +14,7 @@ function ptsb_cfg() {
         'download_dir'   => '/home/plugintema.com/Backups/downloads',
         'db_dump_remote_dir' => 'db-dumps',
         'drive_url'      => 'https://drive.google.com/drive/u/0/folders/18wIaInN0d0ftKhsi1BndrKmkVuOQkFoO',
-
-             'keep_days_def'  => 12,
+        'keep_days_def'  => 12,
 
         // agendamento
         'tz_string'      => 'America/Sao_Paulo',
@@ -26,8 +25,17 @@ function ptsb_cfg() {
         'miss_window'    => 15,
         'queue_timeout'  => 5400,              // 90min
         'lock_ttl'       => 5400,              // TTL do lock otimista (s)
-        'log_max_mb' => 3, // tamanho máx. do log
-'log_keep'   => 5, // quantos arquivos rotacionados manter
+        'log_max_mb'     => 3,                 // tamanho máx. do log
+        'log_keep'       => 5,                 // quantos arquivos rotacionados manter
+
+        'job_limits'     => [
+            'nice'        => 10,
+            'ionice'      => [
+                'class'    => 2,
+                'priority' => 7,
+            ],
+            'cpu_percent' => 70,
+        ],
 
     ];
     /**

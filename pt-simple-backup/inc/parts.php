@@ -57,6 +57,252 @@ function ptsb_manifest_write(string $tarFile, array $add, bool $merge=true): boo
     return true;
 }
 
+if (!function_exists('ptsb_job_detect_bin')) {
+    function ptsb_job_detect_bin(string $bin, string $envPath): ?string {
+        static $cache = [];
+
+        $bin = trim($bin);
+        $envPath = trim($envPath);
+        if ($bin === '') {
+            return null;
+        }
+
+        $key = $envPath . '|' . $bin;
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
+        }
+
+        if (!function_exists('shell_exec')) {
+            $cache[$key] = null;
+            return null;
+        }
+
+        $prefix = $envPath !== '' ? $envPath . ' ' : '';
+        $out = shell_exec($prefix . 'command -v ' . escapeshellarg($bin) . ' 2>/dev/null');
+        $path = trim((string) $out);
+        $cache[$key] = $path !== '' ? $path : null;
+
+        return $cache[$key];
+    }
+}
+
+if (!function_exists('ptsb_job_find_binary')) {
+    function ptsb_job_find_binary($candidate, string $fallback, string $envPath): ?string {
+        $candidate = is_string($candidate) ? trim($candidate) : '';
+        if ($candidate !== '') {
+            if (strpos($candidate, DIRECTORY_SEPARATOR) !== false) {
+                if (@is_executable($candidate)) {
+                    return $candidate;
+                }
+            } else {
+                $found = ptsb_job_detect_bin($candidate, $envPath);
+                if ($found) {
+                    return $found;
+                }
+            }
+        }
+
+        return ptsb_job_detect_bin($fallback, $envPath);
+    }
+}
+
+if (!function_exists('ptsb_job_normalize_ionice_class')) {
+    function ptsb_job_normalize_ionice_class($value): ?int {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_numeric($value)) {
+            return (int) $value;
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $value = strtolower(trim($value));
+        if ($value === '') {
+            return null;
+        }
+
+        if (ctype_digit($value)) {
+            return (int) $value;
+        }
+
+        switch ($value) {
+            case 'idle':
+                return 3;
+            case 'besteffort':
+            case 'best-effort':
+            case 'be':
+                return 2;
+            case 'realtime':
+            case 'rt':
+                return 1;
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('ptsb_job_resource_constraints')) {
+    function ptsb_job_resource_constraints(array $cfg, string $context, string $envPath): array {
+        $limits = [];
+        if (isset($cfg['job_limits']) && is_array($cfg['job_limits'])) {
+            $limits = $cfg['job_limits'];
+        }
+
+        if (function_exists('apply_filters')) {
+            $limits = apply_filters('ptsb_job_limits', $limits, $context, $cfg);
+        }
+
+        $wrappers = [];
+        $envVars  = [];
+        $applied  = [];
+
+        if ($context !== '') {
+            $envVars['PTS_JOB_CONTEXT'] = $context;
+        }
+
+        if (!function_exists('shell_exec') || !ptsb_can_shell()) {
+            return ['wrappers' => [], 'env' => $envVars];
+        }
+
+        $envPath = trim($envPath);
+        if ($envPath === '') {
+            $envPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
+        }
+
+        // CPU limit (cpulimit)
+        $cpuLimit = null;
+        foreach (['cpu_percent', 'cpu_limit', 'cpu_quota'] as $cpuKey) {
+            if (isset($limits[$cpuKey])) {
+                $cpuLimit = $limits[$cpuKey];
+                break;
+            }
+        }
+
+        if (is_string($cpuLimit) && preg_match('/^(off|none|disable)$/i', $cpuLimit)) {
+            $cpuLimit = null;
+        }
+
+        if ($cpuLimit !== null && $cpuLimit !== false) {
+            if (is_numeric($cpuLimit)) {
+                $cpuLimit = (int) $cpuLimit;
+            } else {
+                $cpuLimit = (int) preg_replace('/[^0-9]+/', '', (string) $cpuLimit);
+            }
+
+            if ($cpuLimit > 0) {
+                $cpuLimit = max(1, min(100, $cpuLimit));
+                $cpuBin  = $limits['cpulimit_bin'] ?? ($limits['cpu_bin'] ?? 'cpulimit');
+                $cpuPath = ptsb_job_find_binary($cpuBin, 'cpulimit', $envPath);
+                if ($cpuPath) {
+                    array_unshift($wrappers, escapeshellarg($cpuPath) . ' -l ' . $cpuLimit . ' --');
+                    $envVars['PTS_CPU_LIMIT'] = $cpuLimit;
+                    $applied[] = 'cpulimit';
+                }
+            }
+        }
+
+        // ionice (IO priority/limits)
+        $ioniceCfg = $limits['ionice'] ?? null;
+        if (is_string($ioniceCfg) && preg_match('/^(off|none|disable)$/i', $ioniceCfg)) {
+            $ioniceCfg = null;
+        }
+
+        if ($ioniceCfg !== null && $ioniceCfg !== false) {
+            $ionicePath = ptsb_job_find_binary($limits['ionice_bin'] ?? 'ionice', 'ionice', $envPath);
+            if ($ionicePath) {
+                $class    = 2;
+                $priority = 7;
+
+                if (is_array($ioniceCfg)) {
+                    $candidate = null;
+                    if (isset($ioniceCfg['class'])) {
+                        $candidate = $ioniceCfg['class'];
+                    } elseif (isset($ioniceCfg['mode'])) {
+                        $candidate = $ioniceCfg['mode'];
+                    }
+
+                    $maybeClass = ptsb_job_normalize_ionice_class($candidate);
+                    if ($maybeClass !== null) {
+                        $class = $maybeClass;
+                    }
+
+                    if (isset($ioniceCfg['priority'])) {
+                        $priority = (int) $ioniceCfg['priority'];
+                    } elseif (isset($ioniceCfg['level'])) {
+                        $priority = (int) $ioniceCfg['level'];
+                    } elseif (isset($ioniceCfg['prio'])) {
+                        $priority = (int) $ioniceCfg['prio'];
+                    }
+                } elseif (is_string($ioniceCfg)) {
+                    if (strpos($ioniceCfg, ':') !== false) {
+                        [$classPart, $prioPart] = array_map('trim', explode(':', $ioniceCfg, 2));
+                        $maybeClass = ptsb_job_normalize_ionice_class($classPart);
+                        if ($maybeClass !== null) {
+                            $class = $maybeClass;
+                        }
+                        if ($prioPart !== '' && is_numeric($prioPart)) {
+                            $priority = (int) $prioPart;
+                        }
+                    } else {
+                        $maybeClass = ptsb_job_normalize_ionice_class($ioniceCfg);
+                        if ($maybeClass !== null) {
+                            $class = $maybeClass;
+                        }
+                    }
+                } elseif (is_int($ioniceCfg) || is_numeric($ioniceCfg)) {
+                    $class = (int) $ioniceCfg;
+                }
+
+                $class = max(1, min(3, (int) $class));
+                $priority = max(0, min(7, (int) $priority));
+
+                if ($class === 3) {
+                    $wrappers[] = escapeshellarg($ionicePath) . ' -c 3';
+                } else {
+                    $wrappers[] = escapeshellarg($ionicePath) . ' -c ' . $class . ' -n ' . $priority;
+                    $envVars['PTS_IONICE_PRIORITY'] = $priority;
+                }
+
+                $envVars['PTS_IONICE_CLASS'] = $class;
+                $applied[] = 'ionice';
+            }
+        }
+
+        // nice (CPU priority)
+        $niceCfg = $limits['nice'] ?? null;
+        if (is_string($niceCfg) && preg_match('/^(off|none|disable)$/i', $niceCfg)) {
+            $niceCfg = null;
+        }
+
+        if ($niceCfg !== null && $niceCfg !== false) {
+            if (is_numeric($niceCfg)) {
+                $niceLevel = (int) $niceCfg;
+            } else {
+                $niceLevel = (int) preg_replace('/[^0-9\-]+/', '', (string) $niceCfg);
+            }
+
+            $niceLevel = max(-20, min(19, $niceLevel));
+            $nicePath  = ptsb_job_find_binary($limits['nice_bin'] ?? 'nice', 'nice', $envPath);
+            if ($nicePath) {
+                $wrappers[] = escapeshellarg($nicePath) . ' -n ' . $niceLevel;
+                $envVars['PTS_NICE_LEVEL'] = $niceLevel;
+                $applied[] = 'nice';
+            }
+        }
+
+        if ($applied) {
+            $envVars['PTS_JOB_LIMITS'] = implode(',', $applied);
+            $envVars['PTS_JOB_LIMITS_VERSION'] = '1';
+        }
+
+        return ['wrappers' => $wrappers, 'env' => $envVars];
+    }
+}
+
 function ptsb_parts_to_labels($partsStr): array {
     $map = [
         'db'      => 'Banco',
@@ -198,7 +444,8 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
         ptsb_remote_manifest_invalidate();
     }
 
-    $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
+    $envPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
+    $env = $envPath . ' LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . 'REMOTE='     . escapeshellarg($cfg['remote'])     . ' '
          . 'WP_PATH='    . escapeshellarg(ABSPATH)            . ' '
          . 'PREFIX='     . escapeshellarg($cfg['prefix'])     . ' '
@@ -211,7 +458,22 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
         $env .= ' RCLONE_TUNING=' . escapeshellarg($tuningJson);
     }
 
-    $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
+    $limits = ptsb_job_resource_constraints($cfg, 'backup_manual', $envPath);
+    if (!empty($limits['env'])) {
+        foreach ($limits['env'] as $key => $value) {
+            $env .= ' ' . $key . '=' . escapeshellarg((string) $value);
+        }
+    }
+
+    $wrapperPrefix = '';
+    if (!empty($limits['wrappers'])) {
+        $wrappers = array_values(array_filter($limits['wrappers'], 'strlen'));
+        if ($wrappers) {
+            $wrapperPrefix = implode(' ', $wrappers) . ' ';
+        }
+    }
+
+    $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
     shell_exec($cmd);
 }

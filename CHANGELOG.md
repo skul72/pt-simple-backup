@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.8] - 2025-11-13
+- Aplica `nice` e `ionice` aos disparos de backup e restauração quando disponíveis, evitando que os processos disputem prioridade em horários de pico.
+- Limita o uso de CPU com `cpulimit` (70%) sempre que o binário existir, expondo as restrições via variáveis de ambiente para o script externo.
+- Exporta metadados de contexto e limites ativos (`PTS_JOB_*`) para permitir ajustes adicionais em wrappers personalizados.
+
 ## [1.2.7] - 2025-11-12
 - Remove o disparo manual do WP-Cron via painel, esperando apenas o agendamento padrão.
 - Orienta no painel como configurar um cron do sistema chamando `wp cron event run --due-now`.
