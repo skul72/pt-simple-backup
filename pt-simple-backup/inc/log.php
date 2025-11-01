@@ -113,6 +113,10 @@ function ptsb_log_has_success_marker() {
 function ptsb_maybe_notify_backup_done() {
     $cfg = ptsb_cfg();
 
+    if (function_exists('ptsb_telemetry_collect')) {
+        ptsb_telemetry_collect();
+    }
+
     // === THROTTLE: roda no máx 1x a cada 15s (evita flood via admin_init/AJAX) ===
     $th_key = 'ptsb_notify_throttle_15s';
     $now_ts = time();

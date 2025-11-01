@@ -129,6 +129,206 @@ function ptsb_blob_cleanup(string $pattern, int $maxAge = 86400, ?string $dir = 
     }
 }
 
+function ptsb_telemetry_pending_key(): string {
+    return 'ptsb_telemetry_pending';
+}
+
+function ptsb_telemetry_history_key(): string {
+    return 'ptsb_telemetry_history';
+}
+
+function ptsb_telemetry_prepare_run(array $context = []): ?array {
+    $runId = (string) ($context['id'] ?? ptsb_uuid4());
+    $path  = ptsb_upload_storage_path('telemetry-' . $runId, '.json');
+    if ($path === null) {
+        return null;
+    }
+
+    $now     = time();
+    $pending = get_option(ptsb_telemetry_pending_key(), []);
+    if (!is_array($pending)) {
+        $pending = [];
+    }
+
+    $entry = [
+        'id'         => $runId,
+        'path'       => $path,
+        'created_at' => $now,
+        'plan_id'    => isset($context['plan_id']) ? (string) $context['plan_id'] : '',
+        'plan_path'  => isset($context['plan_path']) ? (string) $context['plan_path'] : '',
+        'parts_csv'  => isset($context['parts_csv']) ? (string) $context['parts_csv'] : '',
+        'prefix'     => isset($context['prefix']) ? (string) $context['prefix'] : '',
+        'keep_days'  => isset($context['keep_days']) ? (int) $context['keep_days'] : -1,
+        'origin'     => isset($context['origin']) ? (string) $context['origin'] : '',
+    ];
+    if (isset($context['job_id'])) {
+        $entry['job_id'] = (string) $context['job_id'];
+    }
+
+    $pending[$entry['id']] = $entry;
+    update_option(ptsb_telemetry_pending_key(), $pending, false);
+
+    return $entry;
+}
+
+function ptsb_telemetry_normalize(array $entry, array $data, string $path, int $now): array {
+    $started  = isset($data['started_at']) ? (int) $data['started_at'] : (int) ($entry['created_at'] ?? $now);
+    $finished = isset($data['finished_at']) ? (int) $data['finished_at'] : ($data['ended_at'] ?? $started);
+    $finished = (int) max($finished, $started);
+
+    $durationMs = isset($data['duration_ms']) ? (int) $data['duration_ms'] : (($finished - $started) * 1000);
+    if ($durationMs < 0) {
+        $durationMs = 0;
+    }
+
+    $summary = [
+        'id'                 => (string) ($entry['id'] ?? ''),
+        'plan_id'            => (string) ($entry['plan_id'] ?? ''),
+        'plan_path'          => (string) ($entry['plan_path'] ?? ''),
+        'parts_csv'          => (string) ($entry['parts_csv'] ?? ''),
+        'prefix'             => (string) ($entry['prefix'] ?? ''),
+        'keep_days'          => (int) ($entry['keep_days'] ?? -1),
+        'origin'             => (string) ($entry['origin'] ?? ''),
+        'job_id'             => isset($entry['job_id']) ? (string) $entry['job_id'] : '',
+        'started_at'         => $started,
+        'finished_at'        => $finished,
+        'duration_ms'        => $durationMs,
+        'transfer_bytes'     => (int) ($data['transfer_bytes'] ?? ($data['bytes_transferred'] ?? ($data['bytes'] ?? 0))),
+        'io_wait_ms'         => (int) ($data['io_wait_ms'] ?? ($data['io_wait'] ?? 0)),
+        'memory_peak_bytes'  => (int) ($data['memory_peak_bytes'] ?? ($data['memory_peak'] ?? 0)),
+        'status'             => isset($data['status']) ? (string) $data['status'] : '',
+        'error'              => isset($data['error']) ? (string) $data['error'] : '',
+        'steps'              => [],
+    ];
+
+    if (!empty($data['steps']) && is_array($data['steps'])) {
+        $steps = [];
+        foreach ($data['steps'] as $step) {
+            if (!is_array($step)) {
+                continue;
+            }
+
+            $label = isset($step['name']) ? (string) $step['name'] : (string) ($step['stage'] ?? '');
+            $label = trim($label);
+            if ($label === '') {
+                continue;
+            }
+
+            $shortLabel = function_exists('mb_substr') ? mb_substr($label, 0, 60) : substr($label, 0, 60);
+            $steps[] = [
+                'name'        => $shortLabel,
+                'duration_ms' => isset($step['duration_ms']) ? (int) $step['duration_ms'] : (int) ($step['duration'] ?? 0),
+                'bytes'       => isset($step['bytes']) ? (int) $step['bytes'] : (int) ($step['transfer_bytes'] ?? 0),
+            ];
+
+            if (count($steps) >= 8) {
+                break;
+            }
+        }
+
+        if ($steps) {
+            $summary['steps'] = $steps;
+        }
+    }
+
+    if (!empty($path)) {
+        $summary['source'] = basename($path);
+    }
+
+    return $summary;
+}
+
+function ptsb_telemetry_collect(): void {
+    $pending = get_option(ptsb_telemetry_pending_key(), []);
+    if (!is_array($pending)) {
+        $pending = [];
+    }
+
+    $history = get_option(ptsb_telemetry_history_key(), []);
+    if (!is_array($history)) {
+        $history = [];
+    }
+
+    $now             = time();
+    $pendingChanged  = false;
+    $historyChanged  = false;
+    $staleThreshold  = 3 * DAY_IN_SECONDS;
+
+    foreach ($pending as $id => $entry) {
+        $path = isset($entry['path']) ? (string) $entry['path'] : '';
+        if ($path === '') {
+            unset($pending[$id]);
+            $pendingChanged = true;
+            continue;
+        }
+
+        if (!@file_exists($path)) {
+            $created = (int) ($entry['created_at'] ?? $now);
+            if (($now - $created) > $staleThreshold) {
+                unset($pending[$id]);
+                $pendingChanged = true;
+            }
+            continue;
+        }
+
+        $raw = @file_get_contents($path);
+        if ($raw === false || trim((string) $raw) === '') {
+            $mtime = @filemtime($path);
+            if ($mtime !== false && ($now - $mtime) > $staleThreshold) {
+                unset($pending[$id]);
+                $pendingChanged = true;
+                @unlink($path);
+            }
+            continue;
+        }
+
+        $data = json_decode((string) $raw, true);
+        if (!is_array($data)) {
+            unset($pending[$id]);
+            $pendingChanged = true;
+            @unlink($path);
+            continue;
+        }
+
+        $summary = ptsb_telemetry_normalize($entry, $data, $path, $now);
+        array_unshift($history, $summary);
+        $historyChanged = true;
+        unset($pending[$id]);
+        $pendingChanged = true;
+        @unlink($path);
+    }
+
+    if ($historyChanged) {
+        $maxAge = 45 * DAY_IN_SECONDS;
+        $history = array_values(array_filter($history, function ($row) use ($now, $maxAge) {
+            $ts = isset($row['finished_at']) ? (int) $row['finished_at'] : (int) ($row['started_at'] ?? 0);
+            if ($ts <= 0) {
+                return true;
+            }
+            return ($now - $ts) <= $maxAge;
+        }));
+        if (count($history) > 40) {
+            $history = array_slice($history, 0, 40);
+        }
+        update_option(ptsb_telemetry_history_key(), $history, false);
+    }
+
+    if ($pendingChanged) {
+        if ($pending) {
+            update_option(ptsb_telemetry_pending_key(), $pending, false);
+        } else {
+            delete_option(ptsb_telemetry_pending_key());
+        }
+    }
+
+    ptsb_blob_cleanup('telemetry-*.json', 60 * DAY_IN_SECONDS);
+}
+
+function ptsb_telemetry_history(): array {
+    $history = get_option(ptsb_telemetry_history_key(), []);
+    return is_array($history) ? $history : [];
+}
+
 function ptsb_tz() {
     $cfg = ptsb_cfg();
     try { return new DateTimeZone($cfg['tz_string']); } catch(Throwable $e){ return new DateTimeZone('America/Sao_Paulo'); }

@@ -475,6 +475,16 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
         }
     }
 
+    $intent    = get_option('ptsb_last_run_intent', []);
+    $telemetry = ptsb_telemetry_prepare_run([
+        'plan_id'   => isset($plan['id']) ? (string) $plan['id'] : '',
+        'plan_path' => isset($planMeta['path']) ? (string) $planMeta['path'] : '',
+        'parts_csv' => (string) $partsCsv,
+        'prefix'    => (string) $prefix,
+        'keep_days' => (int) $keepDays,
+        'origin'    => isset($intent['origin']) ? (string) $intent['origin'] : '',
+    ]);
+
     $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . 'REMOTE='           . escapeshellarg($cfg['remote'])     . ' '
          . 'WP_PATH='          . escapeshellarg(ABSPATH)            . ' '
@@ -492,6 +502,11 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
              .  ' PTS_CHUNK_PLAN_ID='   . escapeshellarg((string)($planData['id'] ?? ''))
              .  ' PTS_CHUNK_PLAN_TOTAL=' . escapeshellarg((string)($planData['total_chunks'] ?? ''))
              .  ' PTS_CHUNK_PLAN_VERSION=' . escapeshellarg((string)($planData['version'] ?? ''));
+    }
+
+    if ($telemetry) {
+        $env .= ' PTS_TELEMETRY_FILE=' . escapeshellarg((string) ($telemetry['path'] ?? ''))
+             .  ' PTS_TELEMETRY_ID='   . escapeshellarg((string) ($telemetry['id'] ?? ''));
     }
 
     $tuningJson = wp_json_encode(ptsb_rclone_tuning(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

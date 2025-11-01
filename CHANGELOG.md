@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.5] - 2025-11-10
+- Reserva arquivo de telemetria por execução, expondo caminho via `PTS_TELEMETRY_FILE` e guardando contexto da execução.
+- Consolida resumos leves de métricas (duração por etapa, bytes, I/O wait, memória pico) com expiração automática do histórico.
+- Limpa arquivos de telemetria antigos e descarta pendências obsoletas para evitar acúmulo.
+
 ## [1.2.4] - 2025-11-09
 - Move planos de chunks e payloads volumosos para arquivos JSON em `/wp-content/uploads/pt-simple-backup/`, mantendo apenas metadados leves nas opções.
 - Marca opções com arrays grandes como `autoload=no`, evitando leitura automática no carregamento de cada página.
