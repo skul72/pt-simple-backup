@@ -1,9 +1,5 @@
 # Changelog
 
-## [1.2.9] - 2025-11-14
-- Reescreve o painel do backup removendo seções duplicadas e código morto do `ui.php`, mantendo apenas a estrutura necessária para cada aba.
-- Simplifica os formulários e scripts inline, utilizando chips com `name` direto e paginação única para reduzir redundâncias.
-
 ## [1.2.8] - 2025-11-13
 - Aplica `nice` e `ionice` aos disparos de backup e restauração quando disponíveis, evitando que os processos disputem prioridade em horários de pico.
 - Limita o uso de CPU com `cpulimit` (70%) sempre que o binário existir, expondo as restrições via variáveis de ambiente para o script externo.
