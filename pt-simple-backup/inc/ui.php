@@ -646,14 +646,9 @@ $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_defau
           const chipsBox = document.getElementById('ptsb-chips');
           const formNow  = document.getElementById('ptsb-now-form');
           function getActiveLetters(){
-            const arr=[]; chipsBox.querySelectorAll('.ptsb-chip').forEach(c=>{
-              if(c.classList.contains('active')) arr.push(String(c.dataset.letter||'').toUpperCase());
-            }); return arr;
+            const sel = chipsBox.querySelectorAll('input[type="checkbox"][data-letter]:checked');
+            return Array.from(sel).map(i => String(i.dataset.letter||'').toUpperCase());
           }
-         function getActiveLetters(){
-  const sel = chipsBox.querySelectorAll('input[type="checkbox"][data-letter]:checked');
-  return Array.from(sel).map(i => String(i.dataset.letter||'').toUpperCase());
-}
 
           formNow.addEventListener('submit', function(){
             const sentinel = document.getElementById('ptsb-parts-hidden-sentinel');
