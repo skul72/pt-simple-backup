@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.9] - 2025-11-14
+- Corrige o controle "Exibindo" da lista do Drive para exibir totais e paginação corretos.
+- Reaplica o espaçamento do filtro para alinhar com o restante das tabelas.
+
 ## [1.2.8] - 2025-11-13
 - Aplica `nice` e `ionice` aos disparos de backup e restauração quando disponíveis, evitando que os processos disputem prioridade em horários de pico.
 - Limita o uso de CPU com `cpulimit` (70%) sempre que o binário existir, expondo as restrições via variáveis de ambiente para o script externo.
