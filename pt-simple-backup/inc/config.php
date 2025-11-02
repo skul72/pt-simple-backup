@@ -332,11 +332,6 @@ function ptsb_telemetry_collect(): void {
     ptsb_blob_cleanup('telemetry-*.json', 60 * DAY_IN_SECONDS);
 }
 
-function ptsb_telemetry_history(): array {
-    $history = get_option(ptsb_telemetry_history_key(), []);
-    return is_array($history) ? $history : [];
-}
-
 function ptsb_tz() {
     $cfg = ptsb_cfg();
     try { return new DateTimeZone($cfg['tz_string']); } catch(Throwable $e){ return new DateTimeZone('America/Sao_Paulo'); }

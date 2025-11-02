@@ -1,5 +1,8 @@
 # Changelog
 
+## [1.2.10] - 2025-11-15
+- Remove `ptsb_telemetry_history` e ajusta chamadas para usar apenas a opção armazenada diretamente.
+
 ## [1.2.9] - 2025-11-14
 - Corrige o controle "Exibindo" da lista do Drive para exibir totais e paginação corretos.
 - Reaplica o espaçamento do filtro para alinhar com o restante das tabelas.
