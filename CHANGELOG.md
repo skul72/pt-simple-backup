@@ -1,8 +1,7 @@
 # Changelog
 
-## [2.0.0] - 2025-11-15
-- Remove os helpers de estado de chunk não utilizados (`ptsb_backup_chunk_state_*`).
-- Simplifica o arquivo de ações ao eliminar código morto.
+## [1.2.10] - 2025-11-15
+- Remove a função `ptsb_letters_from_parts` obsoleta.
 
 ## [1.2.9] - 2025-11-14
 - Corrige o controle "Exibindo" da lista do Drive para exibir totais e paginação corretos.
