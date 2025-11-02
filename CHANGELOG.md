@@ -1,5 +1,8 @@
 # Changelog
 
+## [1.2.10] - 2025-11-15
+- Remove helper obsoleto de mascaramento de e-mails, evitando manter código sem uso no utilitário de configuração.
+
 ## [1.2.9] - 2025-11-14
 - Corrige o controle "Exibindo" da lista do Drive para exibir totais e paginação corretos.
 - Reaplica o espaçamento do filtro para alinhar com o restante das tabelas.
