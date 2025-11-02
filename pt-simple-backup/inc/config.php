@@ -562,11 +562,3 @@ function ptsb_lock_release_when_idle(): void {
     ptsb_lock_release(null, true);
 }
 
-function ptsb_mask_email($email, $keep = 7) {
-    $email = trim((string)$email);
-    if ($email === '' || strpos($email, '@') === false) return $email;
-    [$left, $domain] = explode('@', $email, 2);
-    $keep = max(1, min((int)$keep, strlen($left)));
-    return substr($left, 0, $keep) . '...@' . $domain;
-}
-
