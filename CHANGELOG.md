@@ -1,5 +1,8 @@
 # Changelog
 
+## [1.2.10] - 2025-11-15
+- Remove a função `ptsb_letters_from_parts` obsoleta.
+
 ## [1.2.9] - 2025-11-14
 - Corrige o controle "Exibindo" da lista do Drive para exibir totais e paginação corretos.
 - Reaplica o espaçamento do filtro para alinhar com o restante das tabelas.
