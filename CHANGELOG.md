@@ -1,7 +1,7 @@
 # Changelog
 
 ## [1.2.10] - 2025-11-15
-- Remove helper obsoleto de mascaramento de e-mails, evitando manter código sem uso no utilitário de configuração.
+- Remove `ptsb_telemetry_history` e ajusta chamadas para usar apenas a opção armazenada diretamente.
 
 ## [1.2.9] - 2025-11-14
 - Corrige o controle "Exibindo" da lista do Drive para exibir totais e paginação corretos.
