@@ -13,9 +13,6 @@ if (!defined('ABSPATH')) {
 if (!defined('PTSB_PLUGIN_VERSION')) {
     define('PTSB_PLUGIN_VERSION', '1.2.10');
 }
-if (!defined('PTSB_PLUGIN_FILE')) {
-    define('PTSB_PLUGIN_FILE', __FILE__);
-}
 if (!defined('PTSB_PLUGIN_DIR')) {
     define('PTSB_PLUGIN_DIR', __DIR__ . '/pt-simple-backup');
 }
