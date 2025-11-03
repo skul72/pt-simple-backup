@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.13] - 2025-11-18
+- Lê o `manifest.json` dentro do bundle quando o sidecar não está disponível, garantindo detecção das partes.
+- Verifica diretamente o conteúdo do arquivo remoto para confirmar a ausência do dump antes de acionar o script parcial.
+- Registra no log qual heurística identificou o bundle sem banco para facilitar o diagnóstico.
+
+## [1.2.12] - 2025-11-17
+- Detecta backups sem dump do banco e aciona um script dedicado para restaurar apenas os arquivos.
+- Disponibiliza script interno que mantém o fluxo de logs e copia os arquivos do bundle para o WordPress.
+- Exporta o diretório de downloads para o ambiente da restauração, permitindo reutilizar o cache configurado no plugin.
+
 ## [1.2.11] - 2025-11-16
 - Remove função `ptsb_cycles_global_save` obsoleta do agendamento para evitar usos indevidos.
 

@@ -5,29 +5,156 @@ if (!defined('ABSPATH')) {
 
 function ptsb_manifest_read(string $tarFile): array {
     $cfg = ptsb_cfg();
-    if (!ptsb_can_shell()) return [];
+    if (!ptsb_can_shell()) {
+        return [];
+    }
 
     $key       = 'ptsb_m_' . md5($tarFile);
     $skipCache = defined('PTSB_SKIP_MANIFEST_CACHE') && PTSB_SKIP_MANIFEST_CACHE;
 
     if (!$skipCache) {
         $cached = get_transient($key);
-        if (is_array($cached)) return $cached;
+        if (is_array($cached)) {
+            return $cached;
+        }
     }
 
-   $jsonPath = ptsb_tar_to_json($tarFile);
+    $jsonPath = ptsb_tar_to_json($tarFile);
     $env      = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 ';
-    $out      = shell_exec($env.' rclone cat '.escapeshellarg($cfg['remote'].$jsonPath).' 2>/dev/null');
+    $remoteJson = $cfg['remote'] . $jsonPath;
+    $out = shell_exec($env . ' rclone cat ' . escapeshellarg($remoteJson) . ' 2>/dev/null');
 
-    $data = json_decode((string)$out, true);
-    if (!is_array($data)) $data = [];
+    if (!is_string($out) || trim($out) === '') {
+        $remoteTar = $cfg['remote'] . $tarFile;
+        $out = shell_exec(
+            $env
+            . ' rclone cat ' . escapeshellarg($remoteTar)
+            . ' 2>/dev/null'
+            . ' | tar -xOzf - manifest.json 2>/dev/null'
+        );
+    }
 
-    // Só grava transient se não estivermos no admin dessa página
+    $data = json_decode((string) $out, true);
+    if (!is_array($data)) {
+        $data = [];
+    }
+
     if (!$skipCache) {
-        // TTL menor (5 min) para evitar “grudar” tanto mesmo fora do admin
         set_transient($key, $data, 5 * MINUTE_IN_SECONDS);
     }
+
     return $data;
+}
+
+function ptsb_manifest_extract_parts($manifest): ?array {
+    if (!is_array($manifest) || !$manifest) {
+        return null;
+    }
+
+    $parts = [];
+    $hasInfo = false;
+
+    if (!empty($manifest['parts']) && is_array($manifest['parts'])) {
+        foreach ($manifest['parts'] as $part) {
+            if (!is_string($part)) {
+                continue;
+            }
+            $part = strtolower(trim($part));
+            if ($part === '') {
+                continue;
+            }
+            $parts[$part] = true;
+        }
+        $hasInfo = true;
+    }
+
+    $letters = $manifest['letters'] ?? null;
+    if (!$hasInfo && !empty($letters)) {
+        if (is_string($letters)) {
+            $letters = str_split(preg_replace('/[^A-Za-z]/', '', strtoupper($letters)));
+        }
+
+        if (is_array($letters)) {
+            $mapped = [];
+            foreach ($letters as $value) {
+                if (!is_string($value)) {
+                    continue;
+                }
+                $value = strtoupper(trim($value));
+                if ($value === '') {
+                    continue;
+                }
+                $mapped[] = $value[0];
+            }
+
+            if ($mapped) {
+                if (function_exists('ptsb_letters_to_parts_csv')) {
+                    $partsCsv = ptsb_letters_to_parts_csv($mapped);
+                } elseif (function_exists('ptsb_map_ui_codes_to_parts')) {
+                    $partsCsv = implode(',', ptsb_map_ui_codes_to_parts(array_map('strtolower', $mapped)));
+                } else {
+                    $partsCsv = '';
+                }
+
+                if ($partsCsv !== '') {
+                    foreach (explode(',', strtolower($partsCsv)) as $part) {
+                        $part = trim($part);
+                        if ($part === '') {
+                            continue;
+                        }
+                        $parts[$part] = true;
+                    }
+                    $hasInfo = true;
+                }
+            }
+        }
+    }
+
+    if (!$hasInfo) {
+        foreach (['parts_csv', 'partsCsv'] as $key) {
+            if (!empty($manifest[$key]) && is_string($manifest[$key])) {
+                foreach (explode(',', strtolower($manifest[$key])) as $part) {
+                    $part = trim($part);
+                    if ($part === '') {
+                        continue;
+                    }
+                    $parts[$part] = true;
+                }
+                $hasInfo = true;
+                break;
+            }
+        }
+    }
+
+    if (!$hasInfo) {
+        return null;
+    }
+
+    return array_keys($parts);
+}
+
+function ptsb_remote_bundle_has_db(string $tarFile): ?bool {
+    $tarFile = trim($tarFile);
+    if ($tarFile === '' || !ptsb_can_shell()) {
+        return null;
+    }
+
+    $cfg = ptsb_cfg();
+    $remoteTar = $cfg['remote'] . $tarFile;
+    $env = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 ';
+
+    $cmd = $env
+        . ' rclone cat ' . escapeshellarg($remoteTar)
+        . ' 2>/dev/null'
+        . ' | tar -tzf - 2>/dev/null'
+        . " | grep -m1 -E '(^|/)db-.*\\.sql(\\.gz)?$'";
+
+    $out = shell_exec($cmd);
+    if ($out === null) {
+        return null;
+    }
+
+    return trim((string) $out) === '' ? false : true;
 }
 
 function ptsb_manifest_write(string $tarFile, array $add, bool $merge=true): bool {

@@ -1518,11 +1518,48 @@ update_option('ptsb_last_run_intent', [
         $file = sanitize_text_field($_POST['file']);
 
         if ($act === 'restore') {
+            $manifest = ptsb_manifest_read($file);
+            $includesDb = null;
+
+            $parts = ptsb_manifest_extract_parts($manifest);
+            if (is_array($parts)) {
+                $includesDb = in_array('db', $parts, true);
+                if ($includesDb === false) {
+                    ptsb_log('ptsb: restauração — bundle sem dump detectado via manifest.');
+                }
+            }
+
+            if ($includesDb === null) {
+                $hasDb = ptsb_remote_bundle_has_db($file);
+                if ($hasDb !== null) {
+                    $includesDb = $hasDb;
+                    if ($hasDb === false) {
+                        ptsb_log('ptsb: restauração — bundle sem dump detectado via leitura direta.');
+                    } elseif ($hasDb === true) {
+                        ptsb_log('ptsb: restauração — dump do banco detectado via leitura direta.');
+                    }
+                }
+            }
+
+            $scriptPath = isset($cfg['script_restore']) ? (string) $cfg['script_restore'] : '';
+
+            if ($includesDb === false && !empty($cfg['script_restore_files'])) {
+                $altScript = (string) $cfg['script_restore_files'];
+                if ($altScript !== '') {
+                    $scriptPath = $altScript;
+                    ptsb_log('ptsb: restauração sem dump detectada — usando script de arquivos.');
+                }
+            }
+
             $envPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
             $env = $envPath . ' LC_ALL=C.UTF-8 LANG=C.UTF-8 '
                  . 'REMOTE=' . escapeshellarg($cfg['remote']) . ' '
                  . 'FILE='   . escapeshellarg($file)        . ' '
                  . 'WP_PATH='. escapeshellarg(ABSPATH);
+
+            if (!empty($cfg['download_dir'])) {
+                $env .= ' DOWNLOAD_DIR=' . escapeshellarg($cfg['download_dir']);
+            }
 
             $limits = ptsb_job_resource_constraints($cfg, 'restore', $envPath);
             if (!empty($limits['env'])) {
@@ -1539,7 +1576,7 @@ update_option('ptsb_last_run_intent', [
                 }
             }
 
-            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_restore'])
+            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($scriptPath)
                  . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
             shell_exec($cmd);
             add_settings_error('ptsb', 'rs_started', 'Restaura&ccedil;&atilde;o iniciada para: '.$file.'.', 'updated');
