@@ -1524,13 +1524,6 @@ update_option('ptsb_last_run_intent', [
                  . 'FILE='   . escapeshellarg($file)        . ' '
                  . 'WP_PATH='. escapeshellarg(ABSPATH);
 
-            if (!empty($cfg['download_dir'])) {
-                $env .= ' DOWNLOAD_DIR=' . escapeshellarg((string) $cfg['download_dir']);
-            }
-            if (isset($cfg['db_dump_remote_dir'])) {
-                $env .= ' DB_DUMP_REMOTE_DIR=' . escapeshellarg((string) $cfg['db_dump_remote_dir']);
-            }
-
             $limits = ptsb_job_resource_constraints($cfg, 'restore', $envPath);
             if (!empty($limits['env'])) {
                 foreach ($limits['env'] as $key => $value) {
