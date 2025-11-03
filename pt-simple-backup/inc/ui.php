@@ -121,6 +121,15 @@ if (!in_array($tab, ['backup','cycles','next','last','settings'], true)) $tab = 
     $diag[] = 'backup.sh '.(@is_executable($cfg['script_backup']) ? 'executavel' : 'sem permissao');
     $diag[] = 'restore.sh '.(@is_executable($cfg['script_restore']) ? 'executavel' : 'sem permissao');
 
+    $phpCli = isset($cfg['php_cli']) ? (string) $cfg['php_cli'] : '';
+    if ($phpCli === '') {
+        $diag[] = 'php_cli indefinido';
+    } elseif ($phpCli === 'php') {
+        $diag[] = 'php_cli php (PATH)';
+    } else {
+        $diag[] = 'php_cli ' . $phpCli . (@is_executable($phpCli) ? ' (ok)' : ' (sem exec)');
+    }
+
     $nonce   = wp_create_nonce('ptsb_nonce');
     $referer = sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'] ?? ''));
 

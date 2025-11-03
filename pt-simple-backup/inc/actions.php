@@ -1546,7 +1546,12 @@ update_option('ptsb_last_run_intent', [
                 }
             }
 
-            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_restore'])
+            $phpCli = isset($cfg['php_cli']) && is_string($cfg['php_cli']) && $cfg['php_cli'] !== ''
+                ? $cfg['php_cli']
+                : 'php';
+
+            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($phpCli)
+                 . ' ' . escapeshellarg($cfg['script_restore'])
                  . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
             shell_exec($cmd);
             add_settings_error('ptsb', 'rs_started', 'Restaura&ccedil;&atilde;o iniciada para: '.$file.'.', 'updated');

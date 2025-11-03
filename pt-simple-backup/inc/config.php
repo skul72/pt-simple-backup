@@ -3,6 +3,38 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+function ptsb_guess_php_cli(): string {
+    $candidates = [];
+
+    if (defined('PHP_BINARY') && PHP_BINARY) {
+        $candidates[] = PHP_BINARY;
+    }
+
+    if (defined('PHP_BINDIR') && PHP_BINDIR) {
+        $candidates[] = rtrim(PHP_BINDIR, "\\/ ") . DIRECTORY_SEPARATOR . 'php';
+    }
+
+    $candidates[] = '/usr/bin/php';
+    $candidates[] = '/usr/local/bin/php';
+
+    foreach ($candidates as $candidate) {
+        if (!is_string($candidate) || $candidate === '') {
+            continue;
+        }
+
+        $base = basename($candidate);
+        if (stripos($base, 'php-fpm') !== false) {
+            continue;
+        }
+
+        if (@is_file($candidate) && @is_executable($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return 'php';
+}
+
 function ptsb_cfg() {
     $cfg = [
         'remote'         => 'gdrive_backup:',
@@ -11,6 +43,7 @@ function ptsb_cfg() {
         'lock'           => '/tmp/wpbackup.lock',
         'script_backup'  => '/home/plugintema.com/Scripts/wp-backup-to-gdrive.sh',
         'script_restore' => PTSB_PLUGIN_DIR . '/scripts/wp-restore-from-archive.php',
+        'php_cli'        => ptsb_guess_php_cli(),
         'download_dir'   => '/home/plugintema.com/Backups/downloads',
         'db_dump_remote_dir' => 'db-dumps',
         'drive_url'      => 'https://drive.google.com/drive/u/0/folders/18wIaInN0d0ftKhsi1BndrKmkVuOQkFoO',
