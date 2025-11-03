@@ -10,7 +10,7 @@ function ptsb_cfg() {
         'log'            => '/home/plugintema.com/Scripts/backup-wp.log',
         'lock'           => '/tmp/wpbackup.lock',
         'script_backup'  => '/home/plugintema.com/Scripts/wp-backup-to-gdrive.sh',
-        'script_restore' => '/home/plugintema.com/Scripts/wp-restore-from-archive.sh',
+        'script_restore' => PTSB_PLUGIN_DIR . '/scripts/wp-restore-from-archive.php',
         'download_dir'   => '/home/plugintema.com/Backups/downloads',
         'db_dump_remote_dir' => 'db-dumps',
         'drive_url'      => 'https://drive.google.com/drive/u/0/folders/18wIaInN0d0ftKhsi1BndrKmkVuOQkFoO',
