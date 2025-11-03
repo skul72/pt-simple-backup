@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.13] - 2025-11-18
+- Normaliza permissões dos scripts externos e executa a restauração via `bash`, eliminando erros de "Permission denied".
+- Reforça o `restore.sh` para localizar dumps SQL externos, registrar o nome carregado e aplicar `tar` com strip dinâmico.
+- Ajusta a extração dos arquivos para preservar permissões seguras e sobrescrever o WordPress no diretório correto.
+
 ## [1.2.12] - 2025-11-17
 - Implementa novo script interno de restauração compatível com bundles recentes e dumps armazenados no Drive.
 - Exporta dicas do manifest e credenciais do banco para o script externo, permitindo localizar e importar o SQL automaticamente.

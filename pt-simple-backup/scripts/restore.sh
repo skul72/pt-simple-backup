@@ -22,6 +22,19 @@ DB_HOSTNAME="${DB_HOSTNAME:-}"
 DB_PORT="${DB_PORT:-}"
 DB_SOCKET="${DB_SOCKET:-}"
 
+normalize_parts_list() {
+    local csv="$1"
+    if [[ -z "$csv" ]]; then
+        echo ""
+        return
+    fi
+
+    local compact
+    compact=$(echo "$csv" | tr '[:upper:]' '[:lower:]')
+    compact=$(echo "$compact" | tr -d '[:space:]')
+    echo "$compact"
+}
+
 cleanup() {
     if [[ -n "${TMP_DIR:-}" && -d "$TMP_DIR" ]]; then
         rm -rf "$TMP_DIR"
@@ -146,6 +159,7 @@ fetch_db_remote() {
         local remotePath="${remoteDir}${cand}"
         log "Tentando baixar dump candidato: ${REMOTE}${remotePath}"
         if rclone copyto "${REMOTE}${remotePath}" "$target" 2>/dev/null && [[ -s "$target" ]]; then
+            log "Dump remoto obtido: $(basename "$target")"
             echo "$target"
             return
         fi
@@ -163,6 +177,19 @@ log "Arquivo de arquivos WP detectado: $WP_ARCHIVE"
 DB_DUMP=$(find_db_dump_local)
 if [[ -z "$DB_DUMP" ]]; then
     DB_DUMP=$(fetch_db_remote || true)
+fi
+
+if [[ -n "$DB_DUMP" ]]; then
+    log "Dump de banco localizado: $(basename "$DB_DUMP")"
+fi
+
+bundle_has_db=false
+if [[ -n "$BUNDLE_PARTS" ]]; then
+    bundle_parts_normalized=$(normalize_parts_list "$BUNDLE_PARTS")
+    bundle_parts_normalized=",${bundle_parts_normalized},"
+    if [[ "$bundle_parts_normalized" == *",db,"* ]]; then
+        bundle_has_db=true
+    fi
 fi
 
 restore_database() {
@@ -235,7 +262,7 @@ if [[ -n "$DB_DUMP" ]]; then
         exit 1
     fi
 else
-    if [[ "$BUNDLE_PARTS" == *"db"* ]]; then
+    if [[ "$bundle_has_db" == "true" ]]; then
         log "ERRO: dump do banco não localizado, restauração abortada."
         exit 1
     else
@@ -243,8 +270,56 @@ else
     fi
 fi
 
-log "Restaurando arquivos do WordPress para $WP_PATH..."
-if ! tar -xzf "$WP_ARCHIVE" -C "$WP_PATH"; then
+detect_strip_components() {
+    local archive="$1"
+    local entries=()
+    while IFS= read -r line; do
+        entries+=("$line")
+    done < <((tar -tzf "$archive" 2>/dev/null || true) | head -n400)
+
+    for entry in "${entries[@]}"; do
+        if [[ -z "$entry" ]]; then
+            continue
+        fi
+
+        local clean="$entry"
+        clean="${clean#./}"
+        clean="${clean#./}"
+        clean="${clean%/}"
+        if [[ -z "$clean" ]]; then
+            continue
+        fi
+
+        IFS='/' read -r -a parts <<< "$clean"
+        local idx=0
+        for part in "${parts[@]}"; do
+            if [[ "$part" == "wp-config.php" ]]; then
+                echo "$idx"
+                return
+            fi
+            if [[ "$part" == "wp-admin" ]]; then
+                echo "$idx"
+                return
+            fi
+            idx=$((idx + 1))
+        done
+    done
+
+    echo 0
+}
+
+strip_components=$(detect_strip_components "$WP_ARCHIVE")
+if [[ -z "$strip_components" || ! "$strip_components" =~ ^[0-9]+$ ]]; then
+    strip_components=0
+fi
+
+log "Restaurando arquivos do WordPress para $WP_PATH (strip-components=$strip_components)..."
+tar_args=("-xzf" "$WP_ARCHIVE" "-C" "$WP_PATH" "--overwrite" "--no-same-owner" "--no-same-permissions")
+if (( strip_components > 0 )); then
+    tar_args+=("--strip-components=$strip_components")
+fi
+
+if ! tar "${tar_args[@]}"; then
     log "ERRO: falha ao extrair arquivos do WordPress."
     exit 1
 fi
