@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.12] - 2025-11-17
+- Ajusta o script de restauração para baixar o dump do banco a partir do diretório dedicado quando o bundle não contiver o arquivo.
+- Exporta o diretório remoto dos dumps via variável de ambiente para auxiliar o script durante a restauração.
+
 ## [1.2.11] - 2025-11-16
 - Remove função `ptsb_cycles_global_save` obsoleta do agendamento para evitar usos indevidos.
 
