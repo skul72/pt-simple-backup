@@ -119,7 +119,22 @@ if (!in_array($tab, ['backup','cycles','next','last','settings'], true)) $tab = 
     $diag[] = 'shell_exec '.(ptsb_can_shell() ? 'OK' : 'DESABILITADO');
     $diag[] = 'log '.(ptsb_is_readable($cfg['log']) ? 'legivel' : 'sem leitura');
     $diag[] = 'backup.sh '.(@is_executable($cfg['script_backup']) ? 'executavel' : 'sem permissao');
-    $diag[] = 'restore.sh '.(@is_executable($cfg['script_restore']) ? 'executavel' : 'sem permissao');
+
+    $phpEnvPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
+    $phpPath    = 'php';
+    if (function_exists('ptsb_job_pick_php_binary')) {
+        $phpPath = ptsb_job_pick_php_binary($cfg, $phpEnvPath) ?: 'php';
+    } elseif (!empty($cfg['php_bin'])) {
+        $phpPath = (string) $cfg['php_bin'];
+    }
+
+    $phpOk = true;
+    if (strpos($phpPath, DIRECTORY_SEPARATOR) !== false) {
+        $phpOk = @is_executable($phpPath);
+    }
+
+    $diag[] = 'php '.($phpOk ? 'OK: '.$phpPath : 'nao encontrado');
+    $diag[] = 'restore.php '.(@is_readable($cfg['script_restore']) ? 'legivel' : 'inacessivel');
 
     $nonce   = wp_create_nonce('ptsb_nonce');
     $referer = sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'] ?? ''));

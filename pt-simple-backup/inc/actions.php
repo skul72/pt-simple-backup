@@ -1546,7 +1546,15 @@ update_option('ptsb_last_run_intent', [
                 }
             }
 
-            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_restore'])
+            $phpBin = 'php';
+            if (function_exists('ptsb_job_pick_php_binary')) {
+                $phpBin = ptsb_job_pick_php_binary($cfg, $envPath) ?: 'php';
+            } elseif (!empty($cfg['php_bin'])) {
+                $phpBin = (string) $cfg['php_bin'];
+            }
+
+            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($phpBin) . ' '
+                 . escapeshellarg($cfg['script_restore'])
                  . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
             shell_exec($cmd);
             add_settings_error('ptsb', 'rs_started', 'Restaura&ccedil;&atilde;o iniciada para: '.$file.'.', 'updated');

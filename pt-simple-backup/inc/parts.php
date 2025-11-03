@@ -106,6 +106,57 @@ if (!function_exists('ptsb_job_find_binary')) {
     }
 }
 
+if (!function_exists('ptsb_job_pick_php_binary')) {
+    function ptsb_job_pick_php_binary(array $cfg, string $envPath): string {
+        $candidates = [];
+
+        if (!empty($cfg['php_bin'])) {
+            $candidates[] = (string) $cfg['php_bin'];
+        }
+
+        if (defined('PTSB_PHP_BIN') && PTSB_PHP_BIN) {
+            $candidates[] = (string) PTSB_PHP_BIN;
+        }
+
+        if (defined('PHP_BINARY') && PHP_BINARY) {
+            $candidates[] = (string) PHP_BINARY;
+        }
+
+        if (defined('PHP_BINDIR') && PHP_BINDIR) {
+            $candidates[] = rtrim((string) PHP_BINDIR, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'php';
+        }
+
+        $candidates[] = '/usr/local/bin/php';
+        $candidates[] = '/usr/bin/php';
+        $candidates[] = '/bin/php';
+        $candidates[] = 'php';
+
+        $checked = [];
+
+        foreach ($candidates as $candidate) {
+            $candidate = trim((string) $candidate);
+            if ($candidate === '' || isset($checked[$candidate])) {
+                continue;
+            }
+
+            $checked[$candidate] = true;
+
+            if (strpos($candidate, DIRECTORY_SEPARATOR) !== false) {
+                if (@is_executable($candidate)) {
+                    return $candidate;
+                }
+            } else {
+                $found = ptsb_job_detect_bin($candidate, $envPath);
+                if ($found) {
+                    return $found;
+                }
+            }
+        }
+
+        return 'php';
+    }
+}
+
 if (!function_exists('ptsb_job_normalize_ionice_class')) {
     function ptsb_job_normalize_ionice_class($value): ?int {
         if (is_int($value)) {

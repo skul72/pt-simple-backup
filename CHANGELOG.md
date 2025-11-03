@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.13] - 2025-11-18
+- Força o uso do binário PHP ao disparar a restauração, contornando erros de permissão quando o script não está executável.
+- Atualiza o diagnóstico do painel para indicar o caminho do PHP e exigir apenas leitura do script de restauração.
+
 ## [1.2.12] - 2025-11-17
 - Substitui o script de restauração por implementação PHP que extrai arquivos e banco, recuperando o dump SQL correspondente ao
   backup mesmo quando não está dentro do pacote.
