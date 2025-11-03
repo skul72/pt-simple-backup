@@ -1,5 +1,8 @@
 # Changelog
 
+## [1.2.11] - 2025-11-16
+- Remove função `ptsb_cycles_global_save` obsoleta do agendamento para evitar usos indevidos.
+
 ## [1.2.10] - 2025-11-15
 - Remove `ptsb_telemetry_history` e ajusta chamadas para usar apenas a opção armazenada diretamente.
 

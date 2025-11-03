@@ -183,15 +183,6 @@ return $g;
 
 }
 
-function ptsb_cycles_global_save(array $g){
-    $def = ptsb_cycles_global_get();
-    $out = array_merge($def, $g);
-    $out['merge_dupes'] = (bool)$out['merge_dupes'];
-    $out['policy']      = in_array($out['policy'], ['skip','queue'], true) ? $out['policy'] : 'skip';
-    $out['min_gap_min'] = max(1, (int)$out['min_gap_min']);
-    update_option('ptsb_cycles_global', $out, false);
-}
-
 function ptsb_cycle_today_slots(array $cycle, DateTimeImmutable $refDay){
     $mode = $cycle['mode'] ?? 'daily';
     $cfg  = is_array($cycle['cfg'] ?? null) ? $cycle['cfg'] : [];
