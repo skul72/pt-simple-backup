@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.12] - 2025-11-17
+- Implementa novo script interno de restauração compatível com bundles recentes e dumps armazenados no Drive.
+- Exporta dicas do manifest e credenciais do banco para o script externo, permitindo localizar e importar o SQL automaticamente.
+- Ajusta o ambiente de restauração para reutilizar o diretório de downloads configurado e aplicar o prefixo padrão.
+
 ## [1.2.11] - 2025-11-16
 - Remove função `ptsb_cycles_global_save` obsoleta do agendamento para evitar usos indevidos.
 

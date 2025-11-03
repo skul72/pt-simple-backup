@@ -252,6 +252,26 @@ function ptsb_backup_plan_write(array $plan): ?array {
     ];
 }
 
+function ptsb_restore_manifest_db_hint(array $manifest): ?string {
+    $stack = [$manifest];
+
+    while ($stack) {
+        $current = array_pop($stack);
+        foreach ($current as $value) {
+            if (is_string($value)) {
+                $candidate = trim($value);
+                if ($candidate !== '' && preg_match('/\.sql(?:\.(?:gz|zst|xz|bz2))?$/i', $candidate)) {
+                    return $candidate;
+                }
+            } elseif (is_array($value)) {
+                $stack[] = $value;
+            }
+        }
+    }
+
+    return null;
+}
+
 function ptsb_db_dump_slug(string $name): string {
     $slug = preg_replace('/[^A-Za-z0-9._-]+/', '-', $name);
     return trim((string) $slug, '.-_');
@@ -1518,11 +1538,62 @@ update_option('ptsb_last_run_intent', [
         $file = sanitize_text_field($_POST['file']);
 
         if ($act === 'restore') {
+            $manifest     = ptsb_manifest_read($file);
+            $bundleParts  = '';
+            if (isset($manifest['parts'])) {
+                if (is_string($manifest['parts'])) {
+                    $bundleParts = trim((string) $manifest['parts']);
+                } elseif (is_array($manifest['parts'])) {
+                    $bundleParts = implode(',', array_filter(array_map('trim', array_map('strval', $manifest['parts']))));
+                }
+            }
+            if ($bundleParts === '') {
+                $bundleParts = (string) get_option('ptsb_last_run_parts', '');
+            }
+
+            $dbHint       = is_array($manifest) ? ptsb_restore_manifest_db_hint($manifest) : null;
+            $downloadDir  = isset($cfg['download_dir']) ? (string) $cfg['download_dir'] : '';
+            $remoteDbDir  = ptsb_db_dump_remote_dir($cfg);
+            $parsedHost   = defined('DB_HOST') ? ptsb_db_dump_parse_host(DB_HOST) : ['host'=>'','port'=>null,'socket'=>null];
+
             $envPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
             $env = $envPath . ' LC_ALL=C.UTF-8 LANG=C.UTF-8 '
                  . 'REMOTE=' . escapeshellarg($cfg['remote']) . ' '
                  . 'FILE='   . escapeshellarg($file)        . ' '
-                 . 'WP_PATH='. escapeshellarg(ABSPATH);
+                 . 'WP_PATH='. escapeshellarg(ABSPATH)      . ' '
+                 . 'PREFIX=' . escapeshellarg($cfg['prefix']);
+
+            if ($downloadDir !== '') {
+                $env .= ' DOWNLOAD_DIR=' . escapeshellarg($downloadDir);
+            }
+            if ($bundleParts !== '') {
+                $env .= ' BUNDLE_PARTS=' . escapeshellarg($bundleParts);
+            }
+            if (!empty($remoteDbDir)) {
+                $env .= ' DB_REMOTE_DIR=' . escapeshellarg($remoteDbDir);
+            }
+            if (!empty($dbHint)) {
+                $env .= ' DB_REMOTE_HINT=' . escapeshellarg($dbHint);
+            }
+
+            if (defined('DB_NAME')) {
+                $env .= ' DB_NAME=' . escapeshellarg((string) DB_NAME);
+            }
+            if (defined('DB_USER')) {
+                $env .= ' DB_USER=' . escapeshellarg((string) DB_USER);
+            }
+            if (defined('DB_PASSWORD')) {
+                $env .= ' DB_PASSWORD=' . escapeshellarg((string) DB_PASSWORD);
+            }
+            if (!empty($parsedHost['host'])) {
+                $env .= ' DB_HOSTNAME=' . escapeshellarg((string) $parsedHost['host']);
+            }
+            if (!empty($parsedHost['port'])) {
+                $env .= ' DB_PORT=' . escapeshellarg((string) $parsedHost['port']);
+            }
+            if (!empty($parsedHost['socket'])) {
+                $env .= ' DB_SOCKET=' . escapeshellarg((string) $parsedHost['socket']);
+            }
 
             $limits = ptsb_job_resource_constraints($cfg, 'restore', $envPath);
             if (!empty($limits['env'])) {
