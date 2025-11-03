@@ -2,7 +2,7 @@
 /*
 Plugin Name: PT Simple Backup
 Description: Loader para o mu-plugin PT Simple Backup (painel rclone + agendamento).
-Version: 1.2.12
+Version: 1.2.11
 Author: PlugInTema
 */
 
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
 }
 
 if (!defined('PTSB_PLUGIN_VERSION')) {
-    define('PTSB_PLUGIN_VERSION', '1.2.12');
+    define('PTSB_PLUGIN_VERSION', '1.2.11');
 }
 if (!defined('PTSB_PLUGIN_FILE')) {
     define('PTSB_PLUGIN_FILE', __FILE__);
