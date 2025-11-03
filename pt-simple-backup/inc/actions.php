@@ -1518,79 +1518,11 @@ update_option('ptsb_last_run_intent', [
         $file = sanitize_text_field($_POST['file']);
 
         if ($act === 'restore') {
-            $manifest     = ptsb_manifest_read($file);
-            $scriptPath   = isset($cfg['script_restore']) ? (string) $cfg['script_restore'] : '';
-            $filesScript  = isset($cfg['script_restore_files']) ? (string) $cfg['script_restore_files'] : '';
-            $includesDb   = null;
-
-            if (is_array($manifest) && isset($manifest['parts']) && is_array($manifest['parts'])) {
-                $parts = array_map('strtolower', array_map('strval', $manifest['parts']));
-                $includesDb = in_array('db', $parts, true);
-            } elseif (is_array($manifest) && !empty($manifest['letters'])) {
-                $lettersRaw = $manifest['letters'];
-                if (is_string($lettersRaw)) {
-                    $lettersRaw = str_split(preg_replace('/[^A-Za-z]/', '', strtoupper($lettersRaw)));
-                }
-
-                if (is_array($lettersRaw)) {
-                    $letters = array_filter(array_map(function ($value) {
-                        if (is_string($value)) {
-                            $value = strtoupper(trim($value));
-                            if ($value !== '') {
-                                return $value[0];
-                            }
-                        }
-                        return '';
-                    }, $lettersRaw));
-
-                    if ($letters) {
-                        $partsCsv = '';
-                        if (function_exists('ptsb_letters_to_parts_csv')) {
-                            $partsCsv = ptsb_letters_to_parts_csv($letters);
-                        } elseif (function_exists('ptsb_map_ui_codes_to_parts')) {
-                            $partsCsv = implode(',', ptsb_map_ui_codes_to_parts(array_map('strtolower', $letters)));
-                        }
-
-                        if ($partsCsv !== '') {
-                            $parts = array_filter(array_map('strtolower', array_map('trim', explode(',', $partsCsv))));
-                            if ($parts) {
-                                $includesDb = in_array('db', $parts, true);
-                            }
-                        }
-                    }
-                }
-            }
-
-            if ($includesDb === false && $filesScript !== '') {
-                $resolved = $filesScript;
-                if (strpos($filesScript, DIRECTORY_SEPARATOR) === false && defined('PTSB_PLUGIN_DIR')) {
-                    $resolved = rtrim(PTSB_PLUGIN_DIR, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . ltrim($filesScript, DIRECTORY_SEPARATOR);
-                }
-
-                if (@is_executable($resolved)) {
-                    $scriptPath = $resolved;
-                    ptsb_log('ptsb: restauração sem dump detectada — usando script somente arquivos.');
-                } else {
-                    ptsb_log('ptsb: script de restauração somente arquivos indisponível: ' . $resolved);
-                }
-            }
-
-            if ($scriptPath === '') {
-                ptsb_log('ptsb: restauração abortada — script não configurado.');
-                add_settings_error('ptsb', 'rs_missing_script', 'Script de restauração não configurado.', 'error');
-                ptsb_back();
-                return;
-            }
-
             $envPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
             $env = $envPath . ' LC_ALL=C.UTF-8 LANG=C.UTF-8 '
                  . 'REMOTE=' . escapeshellarg($cfg['remote']) . ' '
                  . 'FILE='   . escapeshellarg($file)        . ' '
                  . 'WP_PATH='. escapeshellarg(ABSPATH);
-
-            if (!empty($cfg['download_dir'])) {
-                $env .= ' DOWNLOAD_DIR=' . escapeshellarg($cfg['download_dir']);
-            }
 
             $limits = ptsb_job_resource_constraints($cfg, 'restore', $envPath);
             if (!empty($limits['env'])) {
@@ -1607,7 +1539,7 @@ update_option('ptsb_last_run_intent', [
                 }
             }
 
-            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($scriptPath)
+            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_restore'])
                  . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
             shell_exec($cmd);
             add_settings_error('ptsb', 'rs_started', 'Restaura&ccedil;&atilde;o iniciada para: '.$file.'.', 'updated');
