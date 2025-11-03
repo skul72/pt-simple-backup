@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.12] - 2025-11-17
+- Detecta backups sem dump do banco e aciona um script dedicado para restaurar apenas os arquivos.
+- Disponibiliza script interno que mantém o fluxo de logs e copia os arquivos do bundle para o WordPress.
+- Exporta o diretório de downloads para o ambiente da restauração, permitindo reutilizar o cache configurado no plugin.
+
 ## [1.2.11] - 2025-11-16
 - Remove função `ptsb_cycles_global_save` obsoleta do agendamento para evitar usos indevidos.
 

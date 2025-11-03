@@ -1518,11 +1518,68 @@ update_option('ptsb_last_run_intent', [
         $file = sanitize_text_field($_POST['file']);
 
         if ($act === 'restore') {
+            $manifest = ptsb_manifest_read($file);
+            $parts = [];
+            $canDecide = false;
+            if (is_array($manifest) && !empty($manifest['parts']) && is_array($manifest['parts'])) {
+                $parts = array_map('strtolower', array_map('strval', $manifest['parts']));
+                $canDecide = true;
+            }
+
+            if (!$canDecide && is_array($manifest) && !empty($manifest['letters'])) {
+                $lettersRaw = $manifest['letters'];
+                if (is_string($lettersRaw)) {
+                    $lettersRaw = str_split(preg_replace('/[^A-Za-z]/', '', strtoupper($lettersRaw)));
+                }
+
+                if (is_array($lettersRaw)) {
+                    $letters = array_filter(array_map(function ($value) {
+                        if (is_string($value)) {
+                            $value = strtoupper(trim($value));
+                            if ($value !== '') {
+                                return $value[0];
+                            }
+                        }
+                        return '';
+                    }, $lettersRaw));
+
+                    if ($letters) {
+                        if (function_exists('ptsb_letters_to_parts_csv')) {
+                            $partsCsv = ptsb_letters_to_parts_csv($letters);
+                        } elseif (function_exists('ptsb_map_ui_codes_to_parts')) {
+                            $partsCsv = implode(',', ptsb_map_ui_codes_to_parts(array_map('strtolower', $letters)));
+                        } else {
+                            $partsCsv = '';
+                        }
+
+                        if ($partsCsv !== '') {
+                            $parts = array_filter(array_map('strtolower', array_map('trim', explode(',', $partsCsv))));
+                            $canDecide = true;
+                        }
+                    }
+                }
+            }
+
+            $includesDb = $canDecide ? in_array('db', $parts, true) : null;
+            $scriptPath = isset($cfg['script_restore']) ? (string) $cfg['script_restore'] : '';
+
+            if ($includesDb === false && !empty($cfg['script_restore_files'])) {
+                $altScript = (string) $cfg['script_restore_files'];
+                if ($altScript !== '') {
+                    $scriptPath = $altScript;
+                    ptsb_log('ptsb: restauração sem dump detectada — usando script de arquivos.');
+                }
+            }
+
             $envPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
             $env = $envPath . ' LC_ALL=C.UTF-8 LANG=C.UTF-8 '
                  . 'REMOTE=' . escapeshellarg($cfg['remote']) . ' '
                  . 'FILE='   . escapeshellarg($file)        . ' '
                  . 'WP_PATH='. escapeshellarg(ABSPATH);
+
+            if (!empty($cfg['download_dir'])) {
+                $env .= ' DOWNLOAD_DIR=' . escapeshellarg($cfg['download_dir']);
+            }
 
             $limits = ptsb_job_resource_constraints($cfg, 'restore', $envPath);
             if (!empty($limits['env'])) {
@@ -1539,7 +1596,7 @@ update_option('ptsb_last_run_intent', [
                 }
             }
 
-            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_restore'])
+            $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($scriptPath)
                  . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
             shell_exec($cmd);
             add_settings_error('ptsb', 'rs_started', 'Restaura&ccedil;&atilde;o iniciada para: '.$file.'.', 'updated');
