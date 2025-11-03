@@ -419,52 +419,6 @@ function ptsb_retention_calc(string $iso, int $keepDays): array {
     return ['x'=>$x,'y'=>$keepDays,'pct'=>$pct];
 }
 
-function ptsb_start_backup_with_parts(string $partsCsv): void {
-    $cfg = ptsb_cfg();
-    $set = ptsb_settings();
-    if (!ptsb_can_shell()) return;
-    if (!ptsb_lock_acquire('parts_trigger')) {
-        return;
-    }
-
-    if (function_exists('ptsb_remote_manifest_invalidate')) {
-        ptsb_remote_manifest_invalidate();
-    }
-
-    $envPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
-    $env = $envPath . ' LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-         . 'REMOTE='     . escapeshellarg($cfg['remote'])     . ' '
-         . 'WP_PATH='    . escapeshellarg(ABSPATH)            . ' '
-         . 'PREFIX='     . escapeshellarg($cfg['prefix'])     . ' '
-         . 'KEEP_DAYS='  . escapeshellarg($set['keep_days'])  . ' '
-         . 'KEEP='       . escapeshellarg($set['keep_days']) . ' '
-         . 'PARTS='      . escapeshellarg($partsCsv);
-
-    $tuningJson = wp_json_encode(ptsb_rclone_tuning(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    if ($tuningJson !== false) {
-        $env .= ' RCLONE_TUNING=' . escapeshellarg($tuningJson);
-    }
-
-    $limits = ptsb_job_resource_constraints($cfg, 'backup_manual', $envPath);
-    if (!empty($limits['env'])) {
-        foreach ($limits['env'] as $key => $value) {
-            $env .= ' ' . $key . '=' . escapeshellarg((string) $value);
-        }
-    }
-
-    $wrapperPrefix = '';
-    if (!empty($limits['wrappers'])) {
-        $wrappers = array_values(array_filter($limits['wrappers'], 'strlen'));
-        if ($wrappers) {
-            $wrapperPrefix = implode(' ', $wrappers) . ' ';
-        }
-    }
-
-    $cmd = '/usr/bin/nohup ' . $wrapperPrefix . '/usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
-         . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
-    shell_exec($cmd);
-}
-
 function ptsb_guess_cycle_mode_from_filename(string $file): ?string {
     $cycles = ptsb_cycles_get(); if (!$cycles) return null;
     $cfg = ptsb_cfg(); $bestLen = 0; $bestMode = null;
