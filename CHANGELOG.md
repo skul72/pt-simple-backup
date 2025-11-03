@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.12] - 2025-11-17
+- Substitui o script de restauração por implementação PHP que extrai arquivos e banco, recuperando o dump SQL correspondente ao
+  backup mesmo quando não está dentro do pacote.
+- Exporta diretórios de trabalho e pasta remota de dumps para o script externo, garantindo download consistente antes da
+  restauração.
+
 ## [1.2.11] - 2025-11-16
 - Remove função `ptsb_cycles_global_save` obsoleta do agendamento para evitar usos indevidos.
 
