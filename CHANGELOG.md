@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.12] - 2025-11-17
+- Exporta para o script de restauração as variáveis do diretório remoto de dumps SQL, garantindo a cópia do banco mesmo quando
+  o arquivo não estiver empacotado no bundle principal.
+
 ## [1.2.11] - 2025-11-16
 - Remove função `ptsb_cycles_global_save` obsoleta do agendamento para evitar usos indevidos.
 

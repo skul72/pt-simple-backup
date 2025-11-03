@@ -1519,10 +1519,33 @@ update_option('ptsb_last_run_intent', [
 
         if ($act === 'restore') {
             $envPath = 'PATH=/usr/local/bin:/usr/bin:/bin';
+            $dbRemoteDirRaw = ptsb_db_dump_remote_dir($cfg);
+            $dbRemoteDir = $dbRemoteDirRaw !== '' ? $dbRemoteDirRaw : '';
+            $dbRemoteDirTrim = $dbRemoteDir !== '' ? rtrim($dbRemoteDir, '/') : '';
+            $dbRemoteFull = $dbRemoteDir !== '' ? $cfg['remote'] . $dbRemoteDir : '';
+            $downloadDir = isset($cfg['download_dir']) ? (string) $cfg['download_dir'] : '';
+
             $env = $envPath . ' LC_ALL=C.UTF-8 LANG=C.UTF-8 '
                  . 'REMOTE=' . escapeshellarg($cfg['remote']) . ' '
                  . 'FILE='   . escapeshellarg($file)        . ' '
                  . 'WP_PATH='. escapeshellarg(ABSPATH);
+
+            if (!empty($cfg['prefix'])) {
+                $env .= ' PREFIX=' . escapeshellarg((string) $cfg['prefix']);
+            }
+
+            if ($downloadDir !== '') {
+                $env .= ' DOWNLOAD_DIR=' . escapeshellarg($downloadDir);
+            }
+
+            if ($dbRemoteDir !== '') {
+                $env .= ' DB_DUMP_REMOTE_DIR=' . escapeshellarg($dbRemoteDir)
+                    .  ' DB_DUMP_REMOTE_DIR_TRIM=' . escapeshellarg($dbRemoteDirTrim)
+                    .  ' PTS_DB_DUMP_REMOTE_DIR=' . escapeshellarg($dbRemoteDir)
+                    .  ' DB_DUMP_REMOTE=' . escapeshellarg($dbRemoteFull)
+                    .  ' PTS_DB_DUMP_REMOTE=' . escapeshellarg($dbRemoteFull)
+                    .  ' DB_DUMP_REMOTE_PATH=' . escapeshellarg($dbRemoteFull);
+            }
 
             $limits = ptsb_job_resource_constraints($cfg, 'restore', $envPath);
             if (!empty($limits['env'])) {
