@@ -3,6 +3,32 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+function ptsb_ensure_executable(string $path): void {
+    $path = trim($path);
+    if ($path === '') {
+        return;
+    }
+
+    if (!@file_exists($path) || @is_link($path) || !@is_file($path)) {
+        return;
+    }
+
+    clearstatcache(true, $path);
+    if (@is_executable($path)) {
+        return;
+    }
+
+    $perms = @fileperms($path);
+    $target = 0755;
+    if ($perms !== false) {
+        $target = $perms | 0111;
+    }
+
+    if (@chmod($path, $target)) {
+        clearstatcache(true, $path);
+    }
+}
+
 function ptsb_cfg() {
     $cfg = [
         'remote'         => 'gdrive_backup:',
@@ -49,6 +75,14 @@ function ptsb_cfg() {
     $cfg = apply_filters('ptsb_config', $cfg);
     $cfg['remote'] = apply_filters('ptsb_remote', $cfg['remote']);
     $cfg['prefix'] = apply_filters('ptsb_prefix', $cfg['prefix']);
+
+    if (!empty($cfg['script_restore'])) {
+        ptsb_ensure_executable((string) $cfg['script_restore']);
+    }
+    if (!empty($cfg['script_backup'])) {
+        ptsb_ensure_executable((string) $cfg['script_backup']);
+    }
+
     return $cfg;
 }
 
