@@ -120,6 +120,9 @@ if (!in_array($tab, ['backup','cycles','next','last','settings'], true)) $tab = 
     $diag[] = 'log '.(ptsb_is_readable($cfg['log']) ? 'legivel' : 'sem leitura');
     $diag[] = 'backup.sh '.(@is_executable($cfg['script_backup']) ? 'executavel' : 'sem permissao');
     $diag[] = 'restore.sh '.(@is_executable($cfg['script_restore']) ? 'executavel' : 'sem permissao');
+    if (!empty($cfg['script_restore_files'])) {
+        $diag[] = 'restore-files.sh '.(@is_executable($cfg['script_restore_files']) ? 'executavel' : 'sem permissao');
+    }
 
     $nonce   = wp_create_nonce('ptsb_nonce');
     $referer = sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'] ?? ''));
